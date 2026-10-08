@@ -79,7 +79,7 @@ export function Navbar() {
 
         <div className="hidden md:flex items-center gap-3">
           {isSignedIn ? (
-            <UserButton fallbackRedirectUrl="/">
+            <UserButton>
               <UserButton.MenuItems>
                 <UserButton.Link label="My Appointments" href="/account" labelIcon={<User className="h-4 w-4" />} />
               </UserButton.MenuItems>
