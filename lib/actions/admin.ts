@@ -62,61 +62,6 @@ export async function markPaidInCash(appointmentId: string): Promise<ActionResul
   return { error: error ? "Failed to mark as paid in cash." : null };
 }
 
-export async function generateBalancePaymentLink(appointmentId: string): Promise<{ ok: boolean, url?: string, error?: string }> {
-  const gate = await requireAdmin();
-  if (!gate.ok) return { ok: false, error: gate.error };
-  
-  const { data: appt, error: fetchErr } = await gate.supabase
-    .from("appointments")
-    .select("*, services(name)")
-    .eq("id", appointmentId)
-    .single();
-    
-  if (fetchErr || !appt || !appt.expected_balance) return { ok: false, error: "Invalid appointment for balance payment." };
-  if (appt.payment_status === "fully_paid") return { ok: false, error: "Already fully paid." };
-  
-  try {
-     const payload = {
-      data: {
-        attributes: {
-          send_email_receipt: true,
-          show_description: true,
-          show_line_items: [{
-            currency: "PHP",
-            amount: Math.round(appt.expected_balance * 100),
-            description: "Remaining balance payment",
-            name: `${appt.services?.name || "Service"} Balance`,
-            quantity: 1
-          }],
-          payment_method_types: ["gcash", "paymaya", "card", "grab_pay"],
-          description: `Balance payment for ${appt.full_name}`,
-          success_url: `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/account?success=true`,
-          cancel_url: `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/`,
-          metadata: { appointment_id: appt.id, type: "balance" }
-        }
-      }
-    };
-
-    const res = await fetch("https://api.paymongo.com/v1/checkout_sessions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Basic ${btoa(process.env.PAYMONGO_SECRET_KEY! + ":")}` },
-      body: JSON.stringify(payload)
-    });
-    
-    if (!res.ok) throw new Error("PayMongo API failed");
-    
-    const checkout = await res.json();
-    const checkoutUrl = checkout.data.attributes.checkout_url;
-    
-    await gate.supabase.from("appointments").update({ paymongo_balance_checkout_id: checkout.data.id }).eq("id", appointmentId);
-    
-    revalidatePath("/admin");
-    return { ok: true, url: checkoutUrl };
-  } catch (err: any) {
-    return { ok: false, error: err.message || "Failed to generate link" };
-  }
-}
-
 // ---------- Services ----------
 export async function upsertService(formData: FormData): Promise<ActionResult> {
   const gate = await requireAdmin();

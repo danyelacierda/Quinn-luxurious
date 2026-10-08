@@ -1,0 +1,37 @@
+warning: in the working copy of 'app/about/page.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'app/account/page.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'app/admin/page.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'app/layout.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'components/home/Hero.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'components/home/InstagramPreview.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'components/home/PromoBanner.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'components/layout/Footer.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'components/layout/Navbar.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'lib/actions/admin.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'lib/actions/booking.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'lib/supabase/client.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'lib/supabase/queries.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'lib/supabase/server.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'middleware.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'package-lock.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'package.json', LF will be replaced by CRLF the next time Git touches it
+ app/about/page.tsx                   |  17 [32m++[m[31m--[m
+ app/account/page.tsx                 |  20 [32m+++[m[31m--[m
+ app/admin/page.tsx                   |   7 [32m++[m
+ app/layout.tsx                       |  18 [32m+++[m[31m--[m
+ app/login/page.tsx                   |  25 [31m------[m
+ app/signup/page.tsx                  |  29 [31m-------[m
+ components/home/Hero.tsx             |  24 [32m+++[m[31m---[m
+ components/home/InstagramPreview.tsx |  23 [32m++++[m[31m--[m
+ components/home/PromoBanner.tsx      |   7 [32m+[m[31m-[m
+ components/layout/Footer.tsx         |  28 [32m+++++[m[31m--[m
+ components/layout/Navbar.tsx         |  44 [32m+++++[m[31m------[m
+ lib/actions/admin.ts                 |   8 [32m+[m[31m-[m
+ lib/actions/booking.ts               |   5 [32m+[m[31m-[m
+ lib/supabase/client.ts               |  27 [32m++++[m[31m---[m
+ lib/supabase/queries.ts              |  19 [32m++[m[31m---[m
+ lib/supabase/server.ts               |  38 [32m++[m[31m-------[m
+ middleware.ts                        |  68 [32m++++++++[m[31m--------[m
+ package-lock.json                    | 146 [32m+++++++++++++++++++++++++++++++++++[m
+ package.json                         |  36 [32m+++++[m[31m----[m
+ 19 files changed, 353 insertions(+), 236 deletions(-)

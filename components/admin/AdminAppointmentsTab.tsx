@@ -16,8 +16,8 @@ function statusStyles(status: string) {
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { markPaidInCash, generateBalancePaymentLink } from "@/lib/actions/admin";
-import { Banknote, Link as LinkIcon } from "lucide-react";
+import { markPaidInCash } from "@/lib/actions/admin";
+import { Banknote } from "lucide-react";
 
 export function AdminAppointmentsTab({ appointments }: { appointments: AppointmentWithDetails[] }) {
   const [isPending, startTransition] = useTransition();
@@ -30,19 +30,6 @@ export function AdminAppointmentsTab({ appointments }: { appointments: Appointme
   async function handleMarkPaid(id: string) {
     setLoadingAction(`cash-${id}`);
     await markPaidInCash(id);
-    setLoadingAction(null);
-  }
-
-  async function handleGenerateLink(id: string) {
-    setLoadingAction(`link-${id}`);
-    const res = await generateBalancePaymentLink(id);
-    if (res.ok && res.url) {
-      // Just copy to clipboard for the admin
-      navigator.clipboard.writeText(res.url);
-      alert("Balance Payment Link copied to clipboard!");
-    } else {
-      alert(res.error || "Failed to generate link");
-    }
     setLoadingAction(null);
   }
 
@@ -97,15 +84,6 @@ export function AdminAppointmentsTab({ appointments }: { appointments: Appointme
             
             {appt.status === "confirmed" && appt.payment_status !== "fully_paid" && (
               <div className="flex items-center gap-2">
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  className="h-8 text-xs"
-                  onClick={() => handleGenerateLink(appt.id)}
-                  disabled={loadingAction === `link-${appt.id}`}
-                >
-                  <LinkIcon className="mr-1 h-3.5 w-3.5" /> Link
-                </Button>
                 <Button 
                   variant="default" 
                   size="sm" 
