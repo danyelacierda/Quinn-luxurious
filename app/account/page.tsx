@@ -2,12 +2,19 @@ import { PageHero } from "@/components/shared/PageHero";
 import { AppointmentsList } from "@/components/account/AppointmentsList";
 import { getUserAppointments, getCurrentUser } from "@/lib/supabase/queries";
 import { SignOutButton } from "@clerk/nextjs";
+import { auth } from "@clerk/nextjs/server";
 import { Button } from "@/components/ui/button";
 
 import { redirect } from "next/navigation";
 import Link from "next/link";
 
 export default async function AccountPage() {
+  const { userId } = await auth();
+
+  if (!userId) {
+    redirect("/login?redirectTo=/account");
+  }
+
   const [appointments, user] = await Promise.all([getUserAppointments(), getCurrentUser()]);
 
   return (
