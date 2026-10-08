@@ -4,12 +4,67 @@ import { createClient } from "@/lib/supabase/server";
 import { auth } from "@clerk/nextjs/server";
 import { revalidatePath } from "next/cache";
 import { getAvailableSlots } from "@/lib/supabase/queries";
+import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+
+// Uses Service Role to bypass RLS for admin operations
+const supabaseAdmin = createSupabaseClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  { auth: { persistSession: false } }
+);
+
+/**
+ * Releases `pending_payment` slots older than 15 minutes.
+ * Ensures the database stays clean and slots are freed up if a checkout is abandoned.
+ */
+export async function releaseExpiredSlots() {
+  const fifteenMinsAgo = new Date(Date.now() - 15 * 60000).toISOString();
+  
+  const { data: expired } = await supabaseAdmin.from("appointments").select("id, paymongo_deposit_checkout_id")
+    .eq("status", "pending_payment").lt("created_at", fifteenMinsAgo);
+
+  if (!expired || expired.length === 0) return;
+
+  for (const appt of expired) {
+    if (appt.paymongo_deposit_checkout_id) {
+       // Hit PayMongo's expire endpoint first
+       const res = await fetch(`https://api.paymongo.com/v1/checkout_sessions/${appt.paymongo_deposit_checkout_id}/expire`, {
+         method: "POST", headers: { "Authorization": `Basic ${btoa(process.env.PAYMONGO_SECRET_KEY! + ":")}` }
+       });
+       
+       if (res.ok) {
+         await supabaseAdmin.from("appointments").update({ status: "cancelled", admin_notes: "Payment expired (15m)" }).eq("id", appt.id);
+       } else {
+         // Could be already paid, expired, or invalid. Let's check status
+         const getRes = await fetch(`https://api.paymongo.com/v1/checkout_sessions/${appt.paymongo_deposit_checkout_id}`, {
+           headers: { "Authorization": `Basic ${btoa(process.env.PAYMONGO_SECRET_KEY! + ":")}` }
+         });
+         const session = await getRes.json();
+         const payments = session.data?.attributes?.payments || [];
+         const isPaid = payments.some((p: any) => p.attributes?.status === "paid");
+         const status = session.data?.attributes?.status;
+         
+         if (isPaid || status === "paid") {
+             // Leave it, webhook will process it
+             continue;
+         } else if (status === "expired") {
+             await supabaseAdmin.from("appointments").update({ status: "cancelled", admin_notes: "Payment expired (15m)" }).eq("id", appt.id);
+         } else {
+             console.error(`PayMongo expire failed for ${appt.paymongo_deposit_checkout_id}`, session);
+         }
+       }
+    } else {
+       await supabaseAdmin.from("appointments").update({ status: "cancelled", admin_notes: "Orphaned pending_payment" }).eq("id", appt.id);
+    }
+  }
+}
 
 export async function fetchAvailableSlots(
   dateISO: string,
   staffId: string | null,
   durationMinutes: number
 ): Promise<string[]> {
+  await releaseExpiredSlots();
   return getAvailableSlots(dateISO, staffId, durationMinutes);
 }
 
@@ -18,6 +73,8 @@ export type BookingResult =
   | { ok: false; error: string; slotTaken?: boolean };
 
 export async function createAppointment(formData: FormData): Promise<BookingResult> {
+  await releaseExpiredSlots();
+
   const serviceId = String(formData.get("serviceId") ?? "");
   const staffId = String(formData.get("staffId") ?? "") || null;
   const appointmentDate = String(formData.get("date") ?? "");
@@ -31,13 +88,34 @@ export async function createAppointment(formData: FormData): Promise<BookingResu
     return { ok: false, error: "Please fill in every field before confirming." };
   }
 
-  const supabase = await createClient();
   const { userId } = await auth();
+  let validCustomerId = null;
+  if (userId) {
+    // Validate if userId exists
+    const supabase = await createClient();
+    const { data: userRecord } = await supabase.from("users").select("id").eq("id", userId).single();
+    if (userRecord) validCustomerId = userId;
+  }
 
-  const { data, error } = await supabase
+  // Fetch service details for price calculation
+  const { data: serviceData } = await supabaseAdmin
+    .from("services")
+    .select("name, price")
+    .eq("id", serviceId)
+    .single();
+    
+  if (!serviceData) {
+    return { ok: false, error: "Service not found." };
+  }
+
+  const deposit = Number(process.env.DEPOSIT_AMOUNT_PHP || 100);
+  const expectedBalance = Math.max(0, serviceData.price - deposit);
+
+  // 1. Insert row as confirmed using Service Role
+  const { data, error } = await supabaseAdmin
     .from("appointments")
     .insert({
-      customer_id: userId ?? null,
+      customer_id: validCustomerId,
       service_id: serviceId,
       staff_id: staffId,
       appointment_date: appointmentDate,
@@ -46,22 +124,36 @@ export async function createAppointment(formData: FormData): Promise<BookingResu
       phone,
       email,
       notes: notes || null,
+      status: "confirmed", // Bookings are immediately confirmed since there is no online payment
+      payment_status: "pending",
+      expected_deposit: deposit,
+      expected_balance: expectedBalance
     })
     .select("id")
     .single();
 
   if (error) {
-    // Postgres unique_violation on (appointment_date, appointment_time, staff_id)
-    // means someone else booked this exact slot a moment ago.
     if (error.code === "23505") {
-      return {
-        ok: false,
-        error: "That time slot was just booked by someone else. Please pick another.",
-        slotTaken: true,
-      };
+      return { ok: false, error: "That time slot was just booked by someone else. Please pick another.", slotTaken: true };
     }
     console.error("createAppointment:", error.message);
-    return { ok: false, error: "Something went wrong saving your appointment. Please try again." };
+    return { ok: false, error: "Something went wrong reserving your slot." };
+  }
+
+  // Fetch service details for the email
+  if (serviceData) {
+    try {
+      const { sendBookingConfirmationEmail } = await import("@/lib/email");
+      await sendBookingConfirmationEmail({
+        customerEmail: email,
+        customerName: fullName,
+        serviceName: serviceData.name,
+        date: appointmentDate,
+        time: appointmentTime,
+      });
+    } catch (emailErr) {
+      console.error("Failed to trigger email:", emailErr);
+    }
   }
 
   revalidatePath("/account");

@@ -106,17 +106,23 @@ export function BookingFlow({ services, staff, defaultUser }: Props) {
     formData.set("notes", notes);
 
     startTransition(async () => {
-      const result = await createAppointment(formData);
-      if (!result.ok) {
-        setError(result.error);
-        if (result.slotTaken) {
-          setTime("");
-          if (dateISO) loadSlots(dateISO);
-          setStep(1);
+      try {
+        const result = await createAppointment(formData);
+        if (!result.ok) {
+          setError(result.error);
+          if (result.slotTaken) {
+            setTime("");
+            if (dateISO) loadSlots(dateISO);
+            setStep(1);
+          }
+          return;
         }
-        return;
+        
+        setConfirmedId(result.appointmentId);
+      } catch (err) {
+        console.error(err);
+        setError("Network error. Please try again.");
       }
-      setConfirmedId(result.appointmentId);
     });
   }
 
@@ -234,6 +240,9 @@ export function BookingFlow({ services, staff, defaultUser }: Props) {
                         {d.toLocaleDateString(undefined, { weekday: "short" })}
                       </span>
                       <span className="font-display text-lg font-semibold text-ink">{d.getDate()}</span>
+                      <span className="text-[10px] uppercase tracking-wider text-ink-soft/70 font-medium">
+                        {d.toLocaleDateString(undefined, { month: "short" })}
+                      </span>
                     </button>
                   );
                 })}

@@ -22,7 +22,6 @@ export function AdminGalleryTab({ gallery }: { gallery: GalleryRow[] }) {
       if (result.error) setError(result.error);
       else {
         setAdding(false);
-        e.currentTarget.reset();
       }
     });
   }

@@ -122,12 +122,42 @@ export async function getCurrentUser(): Promise<UserRow | null> {
     console.error("getCurrentUser:", error.message);
     return null;
   }
+
+  // Local development auto-sync workaround since webhooks don't fire without ngrok
+  if (!data) {
+    const { currentUser } = await import("@clerk/nextjs/server");
+    const clerkUser = await currentUser();
+    if (clerkUser) {
+      const email = clerkUser.emailAddresses[0]?.emailAddress ?? "";
+      const { data: newData, error: insertError } = await supabase
+        .from("users")
+        .insert({
+          id: userId,
+          full_name: `${clerkUser.firstName ?? ""} ${clerkUser.lastName ?? ""}`.trim() || email.split("@")[0],
+          email: email,
+          role: "customer",
+        })
+        .select()
+        .single();
+        
+      if (!insertError && newData) {
+        return newData;
+      }
+    }
+  }
+
   return data;
 }
 
 export type AppointmentWithDetails = AppointmentRow & {
   services: { name: string; duration_minutes: number; price: number } | null;
   staff: { full_name: string } | null;
+  payment_status?: string;
+  deposit_amount?: number;
+  balance_paid?: number;
+  expected_deposit?: number;
+  expected_balance?: number;
+  needs_refund?: boolean;
 };
 
 export async function getUserAppointments(): Promise<AppointmentWithDetails[]> {
