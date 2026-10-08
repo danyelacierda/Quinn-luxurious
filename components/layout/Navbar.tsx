@@ -1,24 +1,25 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
-import { Menu, User } from "lucide-react";
+import { Menu, User, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetTrigger, SheetContent, SheetClose } from "@/components/ui/sheet";
 import { Logomark } from "@/components/shared/Logomark";
 import { navLinks, siteConfig } from "@/lib/data";
 import { cn } from "@/lib/utils";
-import { createClient } from "@/lib/supabase/client";
+import { useAuth, UserButton } from "@clerk/nextjs";
 
 function Logo() {
   return (
     <Link href="/" className="flex items-center gap-2 group" aria-label={`${siteConfig.name} home`}>
-      <span className="flex h-9 w-9 items-center justify-center text-gold-dark transition-transform duration-300 group-hover:scale-105">
-        <Logomark size={30} />
+      <span className="flex h-10 w-10 items-center justify-center transition-transform duration-300 group-hover:scale-105">
+        <Image src="/logo.jpg" alt="Quinn Luxurious Logo" width={40} height={40} className="rounded-sm object-cover" />
       </span>
-      <span className="font-display text-xl sm:text-2xl font-semibold tracking-wide text-ink">
+      <span className="font-display text-xl sm:text-2xl font-semibold tracking-wide text-ink pt-1">
         {siteConfig.name}
       </span>
     </Link>
@@ -27,7 +28,7 @@ function Logo() {
 
 export function Navbar() {
   const [scrolled, setScrolled] = useState(false);
-  const [isSignedIn, setIsSignedIn] = useState(false);
+  const { isSignedIn } = useAuth();
   const pathname = usePathname();
 
   useEffect(() => {
@@ -35,15 +36,6 @@ export function Navbar() {
     onScroll();
     window.addEventListener("scroll", onScroll);
     return () => window.removeEventListener("scroll", onScroll);
-  }, []);
-
-  useEffect(() => {
-    const supabase = createClient();
-    supabase.auth.getUser().then(({ data }) => setIsSignedIn(!!data.user));
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      setIsSignedIn(!!session?.user);
-    });
-    return () => sub.subscription.unsubscribe();
   }, []);
 
   return (
@@ -86,13 +78,21 @@ export function Navbar() {
         </nav>
 
         <div className="hidden md:flex items-center gap-3">
-          <Link
-            href={isSignedIn ? "/account" : "/login"}
-            className="flex h-10 w-10 items-center justify-center rounded-full text-ink/80 hover:bg-cream hover:text-gold-dark transition-colors"
-            aria-label={isSignedIn ? "My account" : "Sign in"}
-          >
-            <User className="h-5 w-5" strokeWidth={1.75} />
-          </Link>
+          {isSignedIn ? (
+            <UserButton afterSignOutUrl="/">
+              <UserButton.MenuItems>
+                <UserButton.Link label="My Appointments" href="/account" labelIcon={<User className="h-4 w-4" />} />
+              </UserButton.MenuItems>
+            </UserButton>
+          ) : (
+            <Link
+              href="/login"
+              className="flex h-10 w-10 items-center justify-center rounded-full text-ink/80 hover:bg-cream hover:text-gold-dark transition-colors"
+              aria-label="Sign in"
+            >
+              <User className="h-5 w-5" strokeWidth={1.75} />
+            </Link>
+          )}
           <Button asChild>
             <Link href="/appointment">Book Now</Link>
           </Button>

@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { PageHero } from "@/components/shared/PageHero";
 import { AdminDashboard } from "@/components/admin/AdminDashboard";
 import {
@@ -7,9 +8,15 @@ import {
   getCustomers,
   getGalleryItems,
   getAllPromotions,
+  getCurrentUser,
 } from "@/lib/supabase/queries";
 
 export default async function AdminPage() {
+  const user = await getCurrentUser();
+  if (!user || (user.role !== "admin" && user.role !== "staff")) {
+    redirect("/");
+  }
+
   const [appointments, services, staff, customers, gallery, promotions] = await Promise.all([
     getAllAppointments(),
     getAllServices(),

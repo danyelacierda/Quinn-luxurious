@@ -1,3 +1,4 @@
+import Image from "next/image";
 import { PageHero } from "@/components/shared/PageHero";
 import { SectionHeading } from "@/components/shared/SectionHeading";
 import { FeatureCard } from "@/components/shared/FeatureCard";
@@ -16,17 +17,13 @@ export default function AboutPage() {
       <section className="section-padding bg-paper">
         <div className="container grid gap-16 md:grid-cols-2 md:items-center">
           <div className="relative aspect-square overflow-hidden rounded-4xl shadow-card">
-            <div
-              className="absolute inset-0"
-              style={{
-                background:
-                  "radial-gradient(circle at 30% 25%, #E7C7C2 0%, transparent 50%), radial-gradient(circle at 75% 80%, #E8D3B3 0%, transparent 55%), linear-gradient(160deg, #FBF6EF 0%, #F4ECE0 45%, #E7C7C2 100%)",
-              }}
+            <Image
+              src="/gallery/studio_interior.jpg"
+              alt="Quinn Luxurious Studio Interior"
+              fill
+              className="object-cover"
             />
-            <div className="absolute inset-10 rounded-full border border-gold/25" />
-            <div className="absolute inset-0 flex items-center justify-center">
-              <Sparkle className="h-16 w-16 text-gold/50" strokeWidth={1.25} />
-            </div>
+            <div className="absolute inset-10 rounded-full border border-ivory/20" />
           </div>
 
           <div>

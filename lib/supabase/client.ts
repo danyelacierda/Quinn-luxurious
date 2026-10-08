@@ -1,13 +1,20 @@
-import { createBrowserClient } from "@supabase/ssr";
+import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+import { useAuth } from "@clerk/nextjs";
 import type { Database } from "@/lib/supabase/types";
+import { useMemo } from "react";
 
-/**
- * Supabase client for use inside Client Components ("use client").
- * Reads/writes the browser session cookie automatically.
- */
-export function createClient() {
-  return createBrowserClient<Database>(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
+export function useSupabaseClient() {
+  const { getToken } = useAuth();
+  
+  return useMemo(() => {
+    return createSupabaseClient<Database>(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        accessToken: async () => {
+          return (await getToken()) ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+        },
+      }
+    );
+  }, [getToken]);
 }

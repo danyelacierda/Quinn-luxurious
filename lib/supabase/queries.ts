@@ -1,3 +1,4 @@
+import { auth } from "@clerk/nextjs/server";
 import { createClient } from "@/lib/supabase/server";
 import type { Tables } from "@/lib/supabase/types";
 
@@ -107,15 +108,15 @@ export async function getActivePromotions(): Promise<PromotionRow[]> {
  * Returns the current session's `public.users` row, or null if signed out.
  */
 export async function getCurrentUser(): Promise<UserRow | null> {
-  const supabase = await createClient();
-  const { data: authData } = await supabase.auth.getUser();
-  if (!authData.user) return null;
+  const { userId } = await auth();
+  if (!userId) return null;
 
+  const supabase = await createClient();
   const { data, error } = await supabase
     .from("users")
     .select("*")
-    .eq("id", authData.user.id)
-    .single();
+    .eq("id", userId)
+    .maybeSingle();
 
   if (error) {
     console.error("getCurrentUser:", error.message);
@@ -130,14 +131,14 @@ export type AppointmentWithDetails = AppointmentRow & {
 };
 
 export async function getUserAppointments(): Promise<AppointmentWithDetails[]> {
-  const supabase = await createClient();
-  const { data: authData } = await supabase.auth.getUser();
-  if (!authData.user) return [];
+  const { userId } = await auth();
+  if (!userId) return [];
 
+  const supabase = await createClient();
   const { data, error } = await supabase
     .from("appointments")
     .select("*, services(name, duration_minutes, price), staff(full_name)")
-    .eq("customer_id", authData.user.id)
+    .eq("customer_id", userId)
     .order("appointment_date", { ascending: true })
     .order("appointment_time", { ascending: true });
 

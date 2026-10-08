@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { auth } from "@clerk/nextjs/server";
 import { revalidatePath } from "next/cache";
 import { getAvailableSlots } from "@/lib/supabase/queries";
 
@@ -31,12 +32,12 @@ export async function createAppointment(formData: FormData): Promise<BookingResu
   }
 
   const supabase = await createClient();
-  const { data: authData } = await supabase.auth.getUser();
+  const { userId } = await auth();
 
   const { data, error } = await supabase
     .from("appointments")
     .insert({
-      customer_id: authData.user?.id ?? null,
+      customer_id: userId ?? null,
       service_id: serviceId,
       staff_id: staffId,
       appointment_date: appointmentDate,

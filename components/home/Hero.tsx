@@ -1,10 +1,12 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { CalendarCheck2, Star } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { siteConfig } from "@/lib/data";
+import { SplitText } from "@/components/shared/react-bits/SplitText";
 
 export function Hero() {
   return (
@@ -19,7 +21,7 @@ export function Hero() {
         >
           <span className="eyebrow">Boutique Lash &amp; Nail Studio</span>
           <h1 className="mt-4 font-display text-5xl sm:text-6xl md:text-7xl font-semibold leading-[1.05] text-ink text-balance">
-            {siteConfig.name}
+            <SplitText>{siteConfig.name}</SplitText>
           </h1>
           <p className="mt-3 font-display text-2xl sm:text-3xl text-gold-dark italic">
             {siteConfig.tagline}
@@ -67,12 +69,12 @@ export function Hero() {
           className="relative flex items-center justify-center"
         >
           <div className="relative aspect-[4/5] w-full max-w-md overflow-hidden rounded-4xl shadow-card">
-            <div
-              className="absolute inset-0"
-              style={{
-                background:
-                  "radial-gradient(circle at 25% 20%, #E7C7C2 0%, transparent 45%), radial-gradient(circle at 80% 75%, #E8D3B3 0%, transparent 55%), linear-gradient(160deg, #FBF6EF 0%, #F4ECE0 45%, #E7C7C2 100%)",
-              }}
+            <Image
+              src="/gallery/lash_extensions.jpg"
+              alt="Flawless Eyelash Extensions"
+              fill
+              className="object-cover"
+              priority
             />
             {/* ambient floating blobs */}
             <motion.div
@@ -87,12 +89,8 @@ export function Hero() {
             />
 
             {/* subtle radial "vanity mirror" ring */}
-            <div className="absolute inset-8 rounded-full border border-gold/25" />
-            <div className="absolute inset-14 rounded-full border border-gold/15" />
-
-            <div className="absolute inset-0 flex items-center justify-center">
-              <span className="font-display text-7xl text-gold/50 select-none">Q</span>
-            </div>
+            <div className="absolute inset-8 rounded-full border border-ivory/40" />
+            <div className="absolute inset-14 rounded-full border border-ivory/20" />
           </div>
 
           {/* Floating "next available" card — the hero's signature device */}

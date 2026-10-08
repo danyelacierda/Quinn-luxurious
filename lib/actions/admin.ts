@@ -4,15 +4,17 @@ import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import type { AppointmentStatus, ServiceCategory } from "@/lib/supabase/types";
 
+import { auth } from "@clerk/nextjs/server";
+
 async function requireAdmin() {
   const supabase = await createClient();
-  const { data: authData } = await supabase.auth.getUser();
-  if (!authData.user) return { supabase, ok: false as const, error: "Not signed in." };
+  const { userId } = await auth();
+  if (!userId) return { supabase, ok: false as const, error: "Not signed in." };
 
   const { data: profile } = await supabase
     .from("users")
     .select("role")
-    .eq("id", authData.user.id)
+    .eq("id", userId)
     .single();
 
   if (!profile || (profile.role !== "admin" && profile.role !== "staff")) {

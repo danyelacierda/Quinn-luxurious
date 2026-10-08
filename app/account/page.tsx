@@ -1,8 +1,11 @@
 import { PageHero } from "@/components/shared/PageHero";
 import { AppointmentsList } from "@/components/account/AppointmentsList";
 import { getUserAppointments, getCurrentUser } from "@/lib/supabase/queries";
-import { signOut } from "@/lib/actions/auth";
+import { SignOutButton } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
+
+import { redirect } from "next/navigation";
+import Link from "next/link";
 
 export default async function AccountPage() {
   const [appointments, user] = await Promise.all([getUserAppointments(), getCurrentUser()]);
@@ -19,11 +22,16 @@ export default async function AccountPage() {
         <div className="container max-w-3xl">
           <AppointmentsList appointments={appointments} />
 
-          <form action={signOut} className="mt-12 text-center">
-            <Button type="submit" variant="outline">
-              Sign Out
-            </Button>
-          </form>
+          <div className="mt-12 flex flex-col sm:flex-row items-center justify-center gap-4">
+            {(user?.role === "admin" || user?.role === "staff") && (
+              <Button asChild variant="default">
+                <Link href="/admin">Go to Admin Dashboard</Link>
+              </Button>
+            )}
+            <SignOutButton>
+              <Button variant="outline">Sign Out</Button>
+            </SignOutButton>
+          </div>
         </div>
       </section>
     </>

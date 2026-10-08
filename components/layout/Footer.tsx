@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import { Sparkle, MapPin, Phone, Mail, Instagram, Facebook } from "lucide-react";
 import { siteConfig, navLinks, businessHours, socialLinks } from "@/lib/data";
@@ -8,18 +9,32 @@ const socialIcons: Record<string, typeof Instagram> = {
   TikTok: Sparkle,
 };
 
-export function Footer() {
+async function getLatestCommitDate() {
+  try {
+    const res = await fetch("https://api.github.com/repos/danyelacierda/Quinn-luxurious/commits/main", {
+      next: { revalidate: 3600 }
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return new Date(data.commit.author.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  } catch {
+    return null;
+  }
+}
+
+export async function Footer() {
   const year = new Date().getFullYear();
+  const commitDate = await getLatestCommitDate();
 
   return (
     <footer className="bg-ink text-ivory/90">
       <div className="container section-padding grid gap-12 md:grid-cols-4">
         <div className="md:col-span-1">
           <div className="flex items-center gap-2">
-            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-gold/15 text-gold ring-1 ring-gold/30">
-              <Sparkle className="h-[18px] w-[18px]" strokeWidth={1.75} />
+            <span className="flex h-10 w-10 items-center justify-center">
+              <Image src="/logo.jpg" alt="Quinn Luxurious Logo" width={40} height={40} className="rounded-sm object-cover" />
             </span>
-            <span className="font-display text-xl font-semibold text-ivory">
+            <span className="font-display text-xl font-semibold text-ivory pt-1">
               {siteConfig.name}
             </span>
           </div>
@@ -99,7 +114,10 @@ export function Footer() {
       <div className="border-t border-ivory/10">
         <div className="container flex flex-col sm:flex-row items-center justify-between gap-2 py-6 text-xs text-ivory/50">
           <p>© {year} {siteConfig.name}. All rights reserved.</p>
-          <p>Crafted with care for beauty that lasts.</p>
+          <div className="flex flex-col sm:flex-row items-center gap-2 sm:gap-4 text-center">
+            {commitDate && <p>Last updated: {commitDate}</p>}
+            <p>Crafted with care for beauty that lasts.</p>
+          </div>
         </div>
       </div>
     </footer>
