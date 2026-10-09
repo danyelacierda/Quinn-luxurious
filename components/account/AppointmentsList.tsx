@@ -95,9 +95,14 @@ function AppointmentCard({ appt }: { appt: AppointmentWithDetails }) {
             {appt.staff?.full_name && <span>with {appt.staff.full_name}</span>}
           </div>
         </div>
-        <span className={cn("rounded-full px-3 py-1 text-xs font-semibold capitalize", statusStyles(appt.status))}>
-          {appt.status}
-        </span>
+        <div className="flex flex-col items-end gap-1.5">
+          <span className={cn("rounded-full px-3 py-1 text-xs font-semibold capitalize", statusStyles(appt.status))}>
+            {appt.status}
+          </span>
+          <span className="text-xs text-ink-soft">
+            Payment: {appt.payment_status === "fully_paid" ? "Paid" : (appt.payment_method === "qr_ph" ? "Awaiting payment confirmation" : "Pay at the salon")}
+          </span>
+        </div>
       </div>
 
       {canModify && (

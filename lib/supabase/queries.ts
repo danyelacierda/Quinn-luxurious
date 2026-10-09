@@ -152,7 +152,6 @@ export async function getCurrentUser(): Promise<UserRow | null> {
 export type AppointmentWithDetails = AppointmentRow & {
   services: { name: string; duration_minutes: number; price: number } | null;
   staff: { full_name: string } | null;
-  payment_status?: string;
   deposit_amount?: number;
   balance_paid?: number;
   expected_deposit?: number;

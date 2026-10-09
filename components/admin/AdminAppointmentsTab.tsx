@@ -16,8 +16,8 @@ function statusStyles(status: string) {
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { markPaidInCash } from "@/lib/actions/admin";
-import { Banknote } from "lucide-react";
+import { markPaidInCash, confirmPayment } from "@/lib/actions/admin";
+import { Banknote, CheckCircle } from "lucide-react";
 
 export function AdminAppointmentsTab({ appointments }: { appointments: AppointmentWithDetails[] }) {
   const [isPending, startTransition] = useTransition();
@@ -30,6 +30,12 @@ export function AdminAppointmentsTab({ appointments }: { appointments: Appointme
   async function handleMarkPaid(id: string) {
     setLoadingAction(`cash-${id}`);
     await markPaidInCash(id);
+    setLoadingAction(null);
+  }
+
+  async function handleConfirmQR(id: string) {
+    setLoadingAction(`qr-${id}`);
+    await confirmPayment(id);
     setLoadingAction(null);
   }
 
@@ -56,7 +62,7 @@ export function AdminAppointmentsTab({ appointments }: { appointments: Appointme
             
             <div className="mt-2 flex flex-wrap gap-2 text-xs font-medium">
               <span className="rounded-md bg-ink/5 px-2 py-0.5 text-ink-soft">
-                Payment: {appt.payment_status?.replace("_", " ")}
+                Payment: {appt.payment_status === "fully_paid" ? "Paid" : (appt.payment_method === "qr_ph" ? "Awaiting payment confirmation" : "Pay at the salon")}
               </span>
               {appt.needs_refund && (
                 <span className="rounded-md bg-rose-dark/10 px-2 py-0.5 text-rose-dark">Needs Refund / Review</span>
@@ -93,6 +99,17 @@ export function AdminAppointmentsTab({ appointments }: { appointments: Appointme
                 >
                   <Banknote className="mr-1 h-3.5 w-3.5" /> Cash
                 </Button>
+                {appt.payment_method === "qr_ph" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 text-xs"
+                    onClick={() => handleConfirmQR(appt.id)}
+                    disabled={loadingAction === `qr-${appt.id}`}
+                  >
+                    <CheckCircle className="mr-1 h-3.5 w-3.5" /> Confirm QR
+                  </Button>
+                )}
               </div>
             )}
           </div>

@@ -56,6 +56,30 @@ export async function markPaidInCash(appointmentId: string): Promise<ActionResul
   return { error: error ? "Failed to mark as paid in cash." : null };
 }
 
+export async function confirmPayment(appointmentId: string): Promise<ActionResult> {
+  const gate = await requireAdmin();
+  if (!gate.ok) return { error: gate.error };
+  
+  const { data: appt } = await gate.supabase
+    .from("appointments")
+    .select("expected_balance, payment_method, payment_status")
+    .eq("id", appointmentId)
+    .single();
+    
+  if (appt?.payment_method !== "qr_ph" || appt?.payment_status !== "pending") {
+    // Silent success if already processed or not applicable
+    return { error: null };
+  }
+  
+  const { error } = await gate.supabase
+    .from("appointments")
+    .update({ payment_status: "fully_paid", balance_paid: appt.expected_balance || 0 })
+    .eq("id", appointmentId);
+    
+  revalidatePath("/admin");
+  return { error: error ? "Failed to confirm payment." : null };
+}
+
 // ---------- Services ----------
 export async function upsertService(formData: FormData): Promise<ActionResult> {
   const gate = await requireAdmin();

@@ -12,6 +12,7 @@ import { Select } from "@/components/ui/select";
 import { createAppointment, fetchAvailableSlots } from "@/lib/actions/booking";
 import type { ServiceRow, StaffRow, UserRow } from "@/lib/supabase/queries";
 import { formatPHP } from "@/lib/format";
+import { PAYMENT_CONFIG } from "@/lib/payment";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -50,6 +51,8 @@ export function BookingFlow({ services, staff, defaultUser }: Props) {
   const [email, setEmail] = useState(defaultUser?.email ?? "");
   const [phone, setPhone] = useState(defaultUser?.phone ?? "");
   const [notes, setNotes] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState<"cash" | "qr_ph">("cash");
+  const [paymentReference, setPaymentReference] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [confirmedId, setConfirmedId] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -105,6 +108,10 @@ export function BookingFlow({ services, staff, defaultUser }: Props) {
     formData.set("phone", phone);
     formData.set("email", email);
     formData.set("notes", notes);
+    formData.set("paymentMethod", paymentMethod);
+    if (paymentMethod === "qr_ph") {
+      formData.set("paymentReference", paymentReference);
+    }
 
     startTransition(async () => {
       try {
@@ -315,6 +322,51 @@ export function BookingFlow({ services, staff, defaultUser }: Props) {
                 <div className="flex justify-between"><dt className="text-ink-soft">Name</dt><dd className="font-medium text-ink">{fullName}</dd></div>
                 <div className="flex justify-between"><dt className="text-ink-soft">Contact</dt><dd className="font-medium text-ink">{email} &middot; {phone}</dd></div>
               </dl>
+
+              <div className="mt-6 space-y-4">
+                <h4 className="font-display text-lg font-semibold text-ink">Payment Method</h4>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className={cn("flex cursor-pointer items-center gap-3 rounded-2xl border p-4 transition-all", paymentMethod === "cash" ? "border-gold bg-gold/10 shadow-gold" : "border-ink/10 bg-white")}>
+                    <input type="radio" name="paymentMethod" value="cash" checked={paymentMethod === "cash"} onChange={() => setPaymentMethod("cash")} className="hidden" />
+                    <span className="font-medium text-ink">Pay at the salon</span>
+                  </label>
+                  <label className={cn("flex cursor-pointer items-center gap-3 rounded-2xl border p-4 transition-all", paymentMethod === "qr_ph" ? "border-gold bg-gold/10 shadow-gold" : "border-ink/10 bg-white")}>
+                    <input type="radio" name="paymentMethod" value="qr_ph" checked={paymentMethod === "qr_ph"} onChange={() => setPaymentMethod("qr_ph")} className="hidden" />
+                    <span className="font-medium text-ink">QR Ph / E-Wallet</span>
+                  </label>
+                </div>
+
+                {paymentMethod === "qr_ph" && (
+                  <div className="mt-4 space-y-4 rounded-2xl bg-cream p-5 text-sm">
+                    <div className="flex flex-col sm:flex-row items-center gap-6">
+                      <div className="flex gap-4">
+                        <div className="w-32 h-32 shrink-0 bg-white rounded-xl flex items-center justify-center p-2 shadow-sm border border-ink/5">
+                          <img src={PAYMENT_CONFIG.gcashQrPath} alt="GCash QR Code" className="max-w-full max-h-full" />
+                        </div>
+                        <div className="w-32 h-32 shrink-0 bg-white rounded-xl flex items-center justify-center p-2 shadow-sm border border-ink/5">
+                          <img src={PAYMENT_CONFIG.mayaQrPath} alt="Maya QR Code" className="max-w-full max-h-full" />
+                        </div>
+                      </div>
+                      <div className="flex-1 space-y-2 text-center sm:text-left">
+                        <p className="font-medium text-ink">Scan to pay: <span className="font-bold">{PAYMENT_CONFIG.accountName}</span></p>
+                        <p className="text-xl font-display font-semibold text-gold-dark">{formatPHP(selectedService.price)}</p>
+                        <p className="text-xs text-ink-soft">Please send exact amount via GCash or Maya.</p>
+                      </div>
+                    </div>
+                    <div>
+                      <Label htmlFor="paymentReference">Reference Number</Label>
+                      <Input
+                        id="paymentReference"
+                        placeholder="e.g. 000123456789"
+                        value={paymentReference}
+                        onChange={(e) => setPaymentReference(e.target.value.toUpperCase())}
+                        required
+                        className="mt-1 font-mono uppercase"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </motion.div>
