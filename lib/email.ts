@@ -52,12 +52,49 @@ export async function sendBookingConfirmationEmail({
 
     const safeCustomerName = escapeHtml(customerName);
     const safeServiceName = escapeHtml(serviceName);
+    const safeDate = escapeHtml(date);
+    const safeTime = escapeHtml(time);
 
     let paymentInfoHtml = "";
     if (paymentMethod === "qr_ph") {
       paymentInfoHtml = `<p><strong>Payment:</strong> QR Ph payment, reference ${escapeHtml(paymentReference || "N/A")}, awaiting confirmation</p>`;
     } else if (paymentMethod === "cash") {
       paymentInfoHtml = `<p><strong>Payment:</strong> Pay at the salon</p>`;
+    }
+
+    // Send admin notification if ADMIN_NOTIFY_EMAIL is set
+    const ADMIN_NOTIFY_EMAIL = process.env.ADMIN_NOTIFY_EMAIL;
+    if (ADMIN_NOTIFY_EMAIL) {
+      try {
+        const formattedPrice = price !== undefined ? formatPHP(price) : "N/A";
+        
+        const adminHtml = `
+          <div style="font-family: sans-serif; max-w-md; margin: auto; padding: 20px;">
+            <h2>New Booking Created</h2>
+            <p><strong>Customer Name:</strong> ${safeCustomerName}</p>
+            <p><strong>Phone:</strong> ${escapeHtml(phone || "N/A")}</p>
+            <p><strong>Service:</strong> ${safeServiceName}</p>
+            <p><strong>Date:</strong> ${safeDate}</p>
+            <p><strong>Time:</strong> ${safeTime}</p>
+            <p><strong>Price:</strong> ${formattedPrice}</p>
+            <p><strong>Payment Method:</strong> ${escapeHtml(paymentMethod || "N/A")}</p>
+            <p><strong>Payment Reference:</strong> ${escapeHtml(paymentReference || "N/A")}</p>
+          </div>
+        `;
+
+        const adminMailOptions = {
+          from: `"Quinn Luxurious" <${GMAIL_USER}>`,
+          to: ADMIN_NOTIFY_EMAIL,
+          replyTo: customerEmail,
+          subject: "New Booking Alert!",
+          html: adminHtml,
+        };
+
+        const adminInfo = await transporter.sendMail(adminMailOptions);
+        console.log("Admin email sent: " + adminInfo.messageId);
+      } catch (adminError) {
+        console.error("Failed to send admin email:", adminError);
+      }
     }
 
     const customerHtml = `
@@ -67,8 +104,8 @@ export async function sendBookingConfirmationEmail({
         <p>Thank you for booking with Quinn Luxurious. We can't wait to see you!</p>
         <div style="background-color: #FBF6EF; padding: 15px; border-radius: 8px; margin: 20px 0;">
           <p style="margin: 0;"><strong>Service:</strong> ${safeServiceName}</p>
-          <p style="margin: 5px 0 0 0;"><strong>Date:</strong> ${date}</p>
-          <p style="margin: 5px 0 0 0;"><strong>Time:</strong> ${time}</p>
+          <p style="margin: 5px 0 0 0;"><strong>Date:</strong> ${safeDate}</p>
+          <p style="margin: 5px 0 0 0;"><strong>Time:</strong> ${safeTime}</p>
           ${paymentInfoHtml}
         </div>
         <p>If you need to reschedule or cancel, please contact us.</p>
@@ -83,41 +120,15 @@ export async function sendBookingConfirmationEmail({
       html: customerHtml,
     };
 
-    const info = await transporter.sendMail(customerMailOptions);
-    console.log("Customer email sent: " + info.messageId);
-
-    // Send admin notification if ADMIN_NOTIFY_EMAIL is set
-    const ADMIN_NOTIFY_EMAIL = process.env.ADMIN_NOTIFY_EMAIL;
-    if (ADMIN_NOTIFY_EMAIL) {
-      const formattedPrice = price !== undefined ? formatPHP(price) : "N/A";
-      
-      const adminHtml = `
-        <div style="font-family: sans-serif; max-w-md; margin: auto; padding: 20px;">
-          <h2>New Booking Created</h2>
-          <p><strong>Customer Name:</strong> ${safeCustomerName}</p>
-          <p><strong>Phone:</strong> ${escapeHtml(phone || "N/A")}</p>
-          <p><strong>Service:</strong> ${safeServiceName}</p>
-          <p><strong>Date:</strong> ${date}</p>
-          <p><strong>Time:</strong> ${time}</p>
-          <p><strong>Price:</strong> ${formattedPrice}</p>
-          <p><strong>Payment Method:</strong> ${escapeHtml(paymentMethod || "N/A")}</p>
-          <p><strong>Payment Reference:</strong> ${escapeHtml(paymentReference || "N/A")}</p>
-        </div>
-      `;
-
-      const adminMailOptions = {
-        from: `"Quinn Luxurious" <${GMAIL_USER}>`,
-        to: ADMIN_NOTIFY_EMAIL,
-        subject: "New Booking Alert!",
-        html: adminHtml,
-      };
-
-      const adminInfo = await transporter.sendMail(adminMailOptions);
-      console.log("Admin email sent: " + adminInfo.messageId);
+    try {
+      const info = await transporter.sendMail(customerMailOptions);
+      console.log("Customer email sent: " + info.messageId);
+      return info;
+    } catch (customerError) {
+      console.error("Failed to send customer email:", customerError);
     }
 
-    return info;
   } catch (error) {
-    console.error("Failed to send email catch block:", error);
+    console.error("Failed to setup email transporter:", error);
   }
 }
