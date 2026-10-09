@@ -3,6 +3,7 @@ import { AppointmentsList } from "@/components/account/AppointmentsList";
 import { getUserAppointments, getCurrentUser } from "@/lib/supabase/queries";
 import { SignOutButton } from "@clerk/nextjs";
 import { auth } from "@clerk/nextjs/server";
+import { requireAdmin } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 
 import { redirect } from "next/navigation";
@@ -15,7 +16,7 @@ export default async function AccountPage() {
     redirect("/login?redirectTo=/account");
   }
 
-  const [appointments, user] = await Promise.all([getUserAppointments(), getCurrentUser()]);
+  const [appointments, user, isAdmin] = await Promise.all([getUserAppointments(), getCurrentUser(), requireAdmin()]);
 
   return (
     <>
@@ -30,7 +31,7 @@ export default async function AccountPage() {
           <AppointmentsList appointments={appointments} />
 
           <div className="mt-12 flex flex-col sm:flex-row items-center justify-center gap-4">
-            {(user?.role === "admin" || user?.role === "staff") && (
+            {isAdmin && (
               <Button asChild variant="default">
                 <Link href="/admin">Go to Admin Dashboard</Link>
               </Button>

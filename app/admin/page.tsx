@@ -8,12 +8,12 @@ import {
   getCustomers,
   getGalleryItems,
   getAllPromotions,
-  getCurrentUser,
 } from "@/lib/supabase/queries";
+import { requireAdmin } from "@/lib/auth";
 
 export default async function AdminPage() {
-  const user = await getCurrentUser();
-  if (!user || (user.role !== "admin" && user.role !== "staff")) {
+  const isAdmin = await requireAdmin();
+  if (!isAdmin) {
     redirect("/");
   }
 
