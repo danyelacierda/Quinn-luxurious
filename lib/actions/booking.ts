@@ -170,6 +170,10 @@ export async function createAppointment(formData: FormData): Promise<BookingResu
         serviceName: serviceData.name,
         date: appointmentDate,
         time: appointmentTime,
+        phone,
+        price: serviceData.price,
+        paymentMethod,
+        paymentReference: finalReference,
       });
     } catch (emailErr) {
       console.error("Failed to trigger email:", emailErr);
