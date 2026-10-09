@@ -10,6 +10,7 @@ import { Select } from "@/components/ui/select";
 import { upsertService, toggleServiceActive } from "@/lib/actions/admin";
 import type { ServiceRow } from "@/lib/supabase/queries";
 import { cn } from "@/lib/utils";
+import { formatPHP } from "@/lib/format";
 
 const CATEGORIES = ["Eyelash Extensions", "Lash Lift", "Nails"] as const;
 
@@ -49,7 +50,7 @@ function ServiceForm({ service, onDone }: { service?: ServiceRow; onDone: () => 
         <Input id="duration" name="duration" type="number" min={5} defaultValue={service?.duration_minutes} required />
       </div>
       <div>
-        <Label htmlFor="price">Price ($)</Label>
+        <Label htmlFor="price">Price (₱)</Label>
         <Input id="price" name="price" type="number" min={0} step="0.01" defaultValue={service?.price} required />
       </div>
       <div className="sm:col-span-2">
@@ -95,7 +96,7 @@ export function AdminServicesTab({ services }: { services: ServiceRow[] }) {
             <div>
               <p className="font-display text-base font-semibold text-ink">{service.name}</p>
               <p className="text-sm text-ink-soft">
-                {service.category} &middot; {service.duration_minutes} min &middot; ${service.price}
+                {service.category} &middot; {service.duration_minutes} min &middot; {formatPHP(service.price)}
               </p>
             </div>
             <div className="flex items-center gap-2">
