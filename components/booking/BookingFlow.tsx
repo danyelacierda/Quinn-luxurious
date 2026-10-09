@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Check, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -53,6 +53,8 @@ export function BookingFlow({ services, staff, defaultUser }: Props) {
   const [notes, setNotes] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<"cash" | "qr_ph">("cash");
   const [paymentReference, setPaymentReference] = useState("");
+  const [qrTab, setQrTab] = useState<"gcash" | "maya">("gcash");
+  const [enlargedQr, setEnlargedQr] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmedId, setConfirmedId] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -337,20 +339,54 @@ export function BookingFlow({ services, staff, defaultUser }: Props) {
                 </div>
 
                 {paymentMethod === "qr_ph" && (
-                  <div className="mt-4 space-y-4 rounded-2xl bg-cream p-5 text-sm">
-                    <div className="flex flex-col sm:flex-row items-center gap-6">
-                      <div className="flex gap-4">
-                        <div className="w-32 h-32 shrink-0 bg-white rounded-xl flex items-center justify-center p-2 shadow-sm border border-ink/5">
-                          <img src={PAYMENT_CONFIG.gcashQrPath} alt="GCash QR Code" className="max-w-full max-h-full" />
+                  <div className="mt-4 space-y-5 rounded-2xl bg-cream p-5 text-sm">
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        variant={qrTab === "gcash" ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => setQrTab("gcash")}
+                        className={cn("flex-1", qrTab === "gcash" ? "bg-gold text-white hover:bg-gold-dark" : "bg-white text-ink hover:border-gold/40")}
+                      >
+                        GCash
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={qrTab === "maya" ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => setQrTab("maya")}
+                        className={cn("flex-1", qrTab === "maya" ? "bg-gold text-white hover:bg-gold-dark" : "bg-white text-ink hover:border-gold/40")}
+                      >
+                        Maya
+                      </Button>
+                    </div>
+
+                    <div className="flex flex-col gap-6 sm:flex-row sm:items-center">
+                      <div className="flex flex-col items-center gap-3">
+                        <div 
+                          className="relative w-[280px] h-[280px] sm:w-[320px] sm:h-[320px] shrink-0 bg-white rounded-xl flex items-center justify-center p-4 shadow-sm border border-ink/5 cursor-pointer hover:border-gold/40 transition-colors"
+                          onClick={() => setEnlargedQr(qrTab === "gcash" ? PAYMENT_CONFIG.gcashQrPath : PAYMENT_CONFIG.mayaQrPath)}
+                        >
+                          <img 
+                            src={qrTab === "gcash" ? PAYMENT_CONFIG.gcashQrPath : PAYMENT_CONFIG.mayaQrPath} 
+                            alt={`${qrTab === "gcash" ? "GCash" : "Maya"} QR Code`} 
+                            className="w-full h-full object-contain"
+                          />
                         </div>
-                        <div className="w-32 h-32 shrink-0 bg-white rounded-xl flex items-center justify-center p-2 shadow-sm border border-ink/5">
-                          <img src={PAYMENT_CONFIG.mayaQrPath} alt="Maya QR Code" className="max-w-full max-h-full" />
-                        </div>
+                        <a 
+                          href={qrTab === "gcash" ? PAYMENT_CONFIG.gcashQrPath : PAYMENT_CONFIG.mayaQrPath}
+                          download
+                          className="text-xs text-center text-gold-dark hover:underline font-medium"
+                        >
+                          Save QR image
+                        </a>
                       </div>
+                      
                       <div className="flex-1 space-y-2 text-center sm:text-left">
-                        <p className="font-medium text-ink">Scan to pay: <span className="font-bold">{PAYMENT_CONFIG.accountName}</span></p>
-                        <p className="text-xl font-display font-semibold text-gold-dark">{formatPHP(selectedService.price)}</p>
-                        <p className="text-xs text-ink-soft">Please send exact amount via GCash or Maya.</p>
+                        <p className="text-ink-soft text-sm">Account Name:</p>
+                        <p className="font-bold text-lg text-ink leading-tight">{PAYMENT_CONFIG.accountName}</p>
+                        <p className="text-2xl font-display font-semibold text-gold-dark mt-4">{formatPHP(selectedService.price)}</p>
+                        <p className="text-xs text-ink-soft">Please send exact amount via {qrTab === "gcash" ? "GCash" : "Maya"}.</p>
                       </div>
                     </div>
                     <div>
@@ -389,6 +425,32 @@ export function BookingFlow({ services, staff, defaultUser }: Props) {
           </Button>
         )}
       </div>
+
+      <AnimatePresence>
+        {enlargedQr && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-ink/80 p-4 backdrop-blur-sm"
+            onClick={() => setEnlargedQr(null)}
+          >
+            <div 
+              className="relative w-full max-w-2xl bg-white p-6 rounded-2xl shadow-xl flex flex-col items-center"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button 
+                className="absolute top-4 right-4 text-ink-soft hover:text-ink bg-cream hover:bg-gold/10 hover:text-gold-dark rounded-full p-2 transition-colors"
+                onClick={() => setEnlargedQr(null)}
+              >
+                <X className="h-5 w-5" />
+              </button>
+              <img src={enlargedQr} alt="Enlarged QR Code" className="w-full h-auto max-h-[80vh] object-contain" />
+              <p className="mt-4 font-semibold text-ink text-center">{PAYMENT_CONFIG.accountName}</p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </Card>
   );
 }
