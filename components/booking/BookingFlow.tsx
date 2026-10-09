@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select } from "@/components/ui/select";
 import { createAppointment, fetchAvailableSlots } from "@/lib/actions/booking";
 import type { ServiceRow, StaffRow, UserRow } from "@/lib/supabase/queries";
+import { formatPHP } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -198,7 +199,7 @@ export function BookingFlow({ services, staff, defaultUser }: Props) {
                   >
                     <p className="font-display text-base font-semibold text-ink">{service.name}</p>
                     <p className="mt-1 text-xs text-ink-soft">
-                      {service.duration_minutes} min &middot; ${service.price}
+                      {service.duration_minutes} min &middot; {formatPHP(service.price)}
                     </p>
                   </button>
                 ))}
@@ -310,7 +311,7 @@ export function BookingFlow({ services, staff, defaultUser }: Props) {
                 <div className="flex justify-between"><dt className="text-ink-soft">Service</dt><dd className="font-medium text-ink">{selectedService.name}</dd></div>
                 <div className="flex justify-between"><dt className="text-ink-soft">Date</dt><dd className="font-medium text-ink">{new Date(`${dateISO}T00:00:00`).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</dd></div>
                 <div className="flex justify-between"><dt className="text-ink-soft">Time</dt><dd className="font-medium text-ink">{time}</dd></div>
-                <div className="flex justify-between"><dt className="text-ink-soft">Price</dt><dd className="font-medium text-ink">${selectedService.price}</dd></div>
+                <div className="flex justify-between"><dt className="text-ink-soft">Price</dt><dd className="font-medium text-ink">{formatPHP(selectedService.price)}</dd></div>
                 <div className="flex justify-between"><dt className="text-ink-soft">Name</dt><dd className="font-medium text-ink">{fullName}</dd></div>
                 <div className="flex justify-between"><dt className="text-ink-soft">Contact</dt><dd className="font-medium text-ink">{email} &middot; {phone}</dd></div>
               </dl>

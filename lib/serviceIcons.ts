@@ -1,5 +1,6 @@
 import { Eye, Sparkles, Gem, type LucideIcon } from "lucide-react";
 import type { ServiceCategory } from "@/lib/supabase/types";
+import { formatPHP } from "@/lib/format";
 
 export const CATEGORY_ICONS: Record<ServiceCategory, LucideIcon> = {
   "Eyelash Extensions": Eye,
@@ -16,6 +17,6 @@ export function formatServiceForCard(service: { name: string; description: strin
     title: service.name,
     description: service.description,
     duration: `${service.duration_minutes} min`,
-    price: `From $${Number(service.price).toFixed(0)}`,
+    price: `From ${formatPHP(service.price)}`,
   };
 }
