@@ -83,6 +83,21 @@ export async function createAppointment(formData: FormData): Promise<BookingResu
   const phone = String(formData.get("phone") ?? "").trim();
   const email = String(formData.get("email") ?? "").trim();
   const notes = String(formData.get("notes") ?? "").trim();
+  const paymentMethod = String(formData.get("paymentMethod") ?? "");
+  const rawReference = String(formData.get("paymentReference") ?? "");
+
+  if (paymentMethod !== "cash" && paymentMethod !== "qr_ph") {
+    return { ok: false, error: "Invalid payment method selected." };
+  }
+
+  let finalReference: string | null = null;
+  if (paymentMethod === "qr_ph") {
+    const trimmedRef = rawReference.trim().toUpperCase();
+    if (!trimmedRef || trimmedRef.length < 6 || trimmedRef.length > 30 || !/^[A-Z0-9]+$/.test(trimmedRef)) {
+      return { ok: false, error: "Please provide a valid 6-30 character alphanumeric reference number." };
+    }
+    finalReference = trimmedRef;
+  }
 
   if (!serviceId || !appointmentDate || !appointmentTime || !fullName || !phone || !email) {
     return { ok: false, error: "Please fill in every field before confirming." };
@@ -126,6 +141,8 @@ export async function createAppointment(formData: FormData): Promise<BookingResu
       notes: notes || null,
       status: "confirmed", // Bookings are immediately confirmed since there is no online payment
       payment_status: "pending",
+      payment_method: paymentMethod,
+      payment_reference: finalReference,
       expected_deposit: deposit,
       expected_balance: expectedBalance
     })
@@ -134,6 +151,9 @@ export async function createAppointment(formData: FormData): Promise<BookingResu
 
   if (error) {
     if (error.code === "23505") {
+      if (error.message.includes("appointments_payment_reference_idx")) {
+        return { ok: false, error: "That reference number was already used." };
+      }
       return { ok: false, error: "That time slot was just booked by someone else. Please pick another.", slotTaken: true };
     }
     console.error("createAppointment:", error.message);

@@ -83,6 +83,9 @@ export type Database = {
           phone: string;
           email: string;
           notes: string | null;
+          payment_status: string;
+          payment_method: string | null;
+          payment_reference: string | null;
           created_at: string;
         };
         Insert: {
@@ -97,6 +100,9 @@ export type Database = {
           phone: string;
           email: string;
           notes?: string | null;
+          payment_status?: string;
+          payment_method?: string | null;
+          payment_reference?: string | null;
         };
         Relationships: [];
         Update: Partial<Database["public"]["Tables"]["appointments"]["Insert"]>;
