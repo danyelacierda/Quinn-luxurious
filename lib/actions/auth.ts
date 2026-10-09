@@ -34,6 +34,8 @@ export async function signUp(formData: FormData): Promise<AuthResult> {
   redirect("/account");
 }
 
+import { requireAdmin } from "@/lib/auth";
+
 export async function signIn(formData: FormData): Promise<AuthResult> {
   const email = String(formData.get("email") ?? "").trim();
   const password = String(formData.get("password") ?? "");
@@ -49,13 +51,9 @@ export async function signIn(formData: FormData): Promise<AuthResult> {
     return { error: "That email or password doesn't match our records." };
   }
 
-  const { data: profile } = await supabase
-    .from("users")
-    .select("role")
-    .eq("id", data.user.id)
-    .single();
+  const isAdmin = await requireAdmin();
 
-  redirect(profile?.role === "admin" || profile?.role === "staff" ? "/admin" : "/account");
+  redirect(isAdmin ? "/admin" : "/account");
 }
 
 export async function signOut() {

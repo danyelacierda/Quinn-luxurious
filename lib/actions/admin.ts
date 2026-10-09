@@ -4,7 +4,6 @@ import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { revalidatePath } from "next/cache";
 import type { AppointmentStatus, ServiceCategory } from "@/lib/supabase/types";
 
-import { auth } from "@clerk/nextjs/server";
 
 const supabaseAdmin = createSupabaseClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -12,18 +11,13 @@ const supabaseAdmin = createSupabaseClient(
   { auth: { persistSession: false } }
 );
 
+import { requireAdmin as checkIsAdmin } from "@/lib/auth";
+
 async function requireAdmin() {
-  const { userId } = await auth();
-  if (!userId) return { supabase: supabaseAdmin, ok: false as const, error: "Not signed in." };
+  const isAdmin = await checkIsAdmin();
 
-  const { data: profile } = await supabaseAdmin
-    .from("users")
-    .select("role")
-    .eq("id", userId)
-    .single();
-
-  if (!profile || (profile.role !== "admin" && profile.role !== "staff")) {
-    return { supabase: supabaseAdmin, ok: false as const, error: "You don't have access to do that." };
+  if (!isAdmin) {
+    return { supabase: supabaseAdmin, ok: false as const, error: "Forbidden" };
   }
   return { supabase: supabaseAdmin, ok: true as const, error: null };
 }
