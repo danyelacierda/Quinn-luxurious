@@ -25,10 +25,16 @@ export async function releaseExpiredSlots() {
     if (error || !expired || expired.length === 0) return;
 
     for (const appt of expired) {
-      await supabaseAdmin
+      const { error: updateErr } = await supabaseAdmin
         .from("appointments")
         .update({ status: "cancelled", payment_status: "expired" })
         .eq("id", appt.id);
+
+      if (updateErr) {
+        console.error(
+          `[releaseExpiredSlots] table: appointments, operation: update, appointment_id: ${appt.id}, error: ${updateErr.message}`
+        );
+      }
     }
   } catch (err) {
     console.error("releaseExpiredSlots error:", err);
@@ -203,6 +209,16 @@ export async function createAppointment(formData: FormData): Promise<BookingResu
 
   if (error || !data) {
     console.error("createAppointment error:", error?.message);
+    // Backed by partial unique index `appointments_no_double_booking` on active slots.
+    // Any 23505 unique violation here indicates that the slot is taken, since no
+    // payment_reference is written at initial insert (references are set post-checkout).
+    if (error && (error as { code?: string }).code === "23505") {
+      return {
+        ok: false,
+        error: "That time slot is already booked. Please pick another.",
+        slotTaken: true,
+      };
+    }
     return { ok: false, error: "Failed to book appointment. Please try again." };
   }
 
@@ -250,12 +266,21 @@ export async function createAppointment(formData: FormData): Promise<BookingResu
         .eq("id", data.id);
 
       if (sessionUpdateErr) {
-        await supabaseAdmin
+        console.error(
+          `[createAppointment] table: appointments, operation: update (stripe_session_id), appointment_id: ${data.id}, error: ${sessionUpdateErr.message}`
+        );
+        const { error: fallbackErr } = await supabaseAdmin
           .from("appointments")
           .update({
             payment_reference: session.id,
           })
           .eq("id", data.id);
+
+        if (fallbackErr) {
+          console.error(
+            `[createAppointment] table: appointments, operation: update (payment_reference fallback), appointment_id: ${data.id}, error: ${fallbackErr.message}`
+          );
+        }
       }
 
       revalidatePath("/account");

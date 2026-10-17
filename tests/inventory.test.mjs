@@ -129,6 +129,7 @@ test.describe("Step 5: Inventory Management Suite", () => {
       existingDeductions,
       inventoryState,
       serviceRecipes,
+      queryError,
     }) {
       // 1. Idempotency Check
       if (existingDeductions.has(appointmentId)) {
@@ -141,7 +142,17 @@ test.describe("Step 5: Inventory Management Suite", () => {
         };
       }
 
-      // 2. Fetch recipe for this service
+      // 2. Fetch recipe for this service (with query error simulation)
+      if (queryError) {
+        return {
+          success: false,
+          deducted: false,
+          blocking: false,
+          error: "Failed to query service inventory recipes: " + queryError,
+          movements: [],
+        };
+      }
+
       const recipes = serviceRecipes[serviceId] || [];
       if (recipes.length === 0) {
         existingDeductions.add(appointmentId);
@@ -149,6 +160,7 @@ test.describe("Step 5: Inventory Management Suite", () => {
           success: true,
           deducted: true,
           alreadyDeducted: false,
+          blocking: false,
           message: "No inventory items consumed for this service.",
           movements: [],
         };
@@ -161,6 +173,7 @@ test.describe("Step 5: Inventory Management Suite", () => {
           return {
             success: false,
             deducted: false,
+            blocking: true,
             error: "Insufficient stock for " + (item ? item.name : recipe.itemId) + ". Required: " + recipe.quantity + ", Available: " + (item ? item.stock : 0),
             movements: [],
           };
@@ -316,6 +329,68 @@ test.describe("Step 5: Inventory Management Suite", () => {
       assert.ok(historicalMovement.id);
       assert.equal(historicalMovement.staffId, "staff-deactivated-uuid");
       assert.equal(historicalMovement.changeQuantity, -0.5);
+    });
+
+    test("ERROR-VS-EMPTY: Query error does NOT insert guard row and does NOT block appointment completion", () => {
+      const existingDeductions = new Set();
+      const inventoryState = { "item-glue": { name: "Lash Glue 5ml", stock: 10 } };
+      const serviceRecipes = {};
+
+      const result = simulateAppointmentDeduction({
+        appointmentId: "appt-error-1",
+        serviceId: "svc-any",
+        staffId: "staff-1",
+        existingDeductions,
+        inventoryState,
+        serviceRecipes,
+        queryError: "relation 'service_inventory_recipes' does not exist",
+      });
+
+      // 1. Returns error result
+      assert.equal(result.success, false);
+      assert.equal(result.deducted, false);
+      assert.match(result.error, /Failed to query service inventory recipes/i);
+
+      // 2. Guard row was NOT inserted into existingDeductions
+      assert.equal(existingDeductions.has("appt-error-1"), false);
+
+      // 3. Non-blocking: caller logic (deductionRes.blocking !== false) does NOT abort completion
+      const isBlocked = result.error && result.blocking !== false;
+      assert.equal(isBlocked, false);
+    });
+
+    test("ERROR-VS-EMPTY: Zero recipes query success DOES insert guard row and marks completed cleanly", () => {
+      const existingDeductions = new Set();
+      const inventoryState = { "item-glue": { name: "Lash Glue 5ml", stock: 10 } };
+      const serviceRecipes = { "svc-consultation": [] }; // zero recipes
+
+      const result = simulateAppointmentDeduction({
+        appointmentId: "appt-empty-1",
+        serviceId: "svc-consultation",
+        staffId: "staff-1",
+        existingDeductions,
+        inventoryState,
+        serviceRecipes,
+      });
+
+      // 1. Returns success result
+      assert.equal(result.success, true);
+      assert.equal(result.deducted, true);
+      assert.match(result.message, /No inventory items consumed/i);
+
+      // 2. Guard row WAS inserted into existingDeductions
+      assert.equal(existingDeductions.has("appt-empty-1"), true);
+
+      // 3. Subsequent completion attempt hits idempotency check
+      const retryResult = simulateAppointmentDeduction({
+        appointmentId: "appt-empty-1",
+        serviceId: "svc-consultation",
+        staffId: "staff-1",
+        existingDeductions,
+        inventoryState,
+        serviceRecipes,
+      });
+      assert.equal(retryResult.alreadyDeducted, true);
     });
   });
 });

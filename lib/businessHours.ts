@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Business hours used to generate bookable time slots.
  * Index corresponds to JavaScript Date.getDay() (0 = Sunday, 1 = Monday, ..., 6 = Saturday)
  */
@@ -39,4 +39,43 @@ export function generateSlotsForDate(
     slots.push(to12Hour(`${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`));
   }
   return slots;
+}
+
+/**
+ * Exact non-PII columns required for availability checks.
+ * Under zero circumstances should customer names, emails, phones, or payment data be queried.
+ */
+export const BOOKED_SLOTS_COLUMNS = "appointment_time, appointment_date, staff_id" as const;
+
+export interface BookedSlotRecord {
+  appointment_time: string;
+  appointment_date?: string;
+  staff_id?: string | null;
+  status?: string;
+}
+
+/**
+ * Pure slot availability filtering function.
+ * Given all generated slots for a date and a list of booked appointment records,
+ * computes available slots by excluding active (non-cancelled) appointments.
+ * If targetStaffId is specified, only bookings assigned to that staff member
+ * (or unassigned bookings) block the slot.
+ */
+export function filterAvailableSlots(
+  allSlots: string[],
+  bookedAppointments: BookedSlotRecord[],
+  targetStaffId?: string | null
+): string[] {
+  // Exclude cancelled appointments so cancelled bookings never block availability
+  const activeBookings = bookedAppointments.filter(
+    (b) => b.status !== "cancelled"
+  );
+
+  // Filter to bookings relevant to targetStaffId
+  const relevantBookings = targetStaffId
+    ? activeBookings.filter((b) => !b.staff_id || b.staff_id === targetStaffId)
+    : activeBookings;
+
+  const takenTimes = new Set(relevantBookings.map((b) => b.appointment_time));
+  return allSlots.filter((slot) => !takenTimes.has(slot));
 }

@@ -28,6 +28,7 @@ export default async function AppointmentSuccessPage({ searchParams }: PageProps
   let appointment: AppointmentRow | null = null;
   let service: ServiceRow | null = null;
   let isVerifiedPaid = false;
+  let slotConflict = false;
   let unauthorizedAccess = false;
 
   if (appointmentId) {
@@ -76,6 +77,7 @@ export default async function AppointmentSuccessPage({ searchParams }: PageProps
         }
 
         isVerifiedPaid = appt.payment_status === "fully_paid";
+        slotConflict = Boolean(appt.needs_refund);
 
         // 2. Safe server-to-server fallback check:
         // NEVER trust redirect params alone. Verify all session attributes rigorously before updating.
@@ -107,7 +109,7 @@ export default async function AppointmentSuccessPage({ searchParams }: PageProps
               isPaidPaymentMode
             ) {
               // Atomic update with status guard
-              const { data: updatedRows } = await supabaseAdmin
+              const { data: updatedRows, error: updateErr } = await supabaseAdmin
                 .from("appointments")
                 .update({
                   status: "confirmed",
@@ -125,7 +127,37 @@ export default async function AppointmentSuccessPage({ searchParams }: PageProps
                 .neq("payment_status", "fully_paid")
                 .select("id");
 
-              if (updatedRows && updatedRows.length > 0) {
+              const errObj = updateErr as { code?: string; message?: string; details?: string };
+              const errText = `${errObj?.message || ""} ${errObj?.details || ""}`;
+              const isSlotConflict =
+                errObj?.code === "23505" &&
+                errText.includes("appointments_no_double_booking");
+
+              if (isSlotConflict) {
+                console.error(
+                  `[successPage] slot conflict (23505: appointments_no_double_booking), flagging for refund, appointment_id: ${appointmentId}`
+                );
+                slotConflict = true;
+                const { error: refundErr } = await supabaseAdmin
+                  .from("appointments")
+                  .update({
+                    needs_refund: true,
+                    payment_reference: session.payment_intent
+                      ? String(session.payment_intent)
+                      : session.id,
+                  })
+                  .eq("id", appointmentId);
+
+                if (refundErr) {
+                  console.error(
+                    `[successPage] table: appointments, operation: update (needs_refund), appointment_id: ${appointmentId}, error: ${refundErr.message}`
+                  );
+                }
+              } else if (updateErr) {
+                console.error(
+                  `[successPage] database update failed, appointment_id: ${appointmentId}: ${updateErr.message}`
+                );
+              } else if (updatedRows && updatedRows.length > 0) {
                 isVerifiedPaid = true;
               } else if (appt.payment_status === "fully_paid") {
                 isVerifiedPaid = true;
@@ -169,8 +201,12 @@ export default async function AppointmentSuccessPage({ searchParams }: PageProps
     <>
       <PageHero
         eyebrow="Booking Status"
-        title={isVerifiedPaid ? "Appointment Confirmed" : "Booking Received"}
-        description="Thank you for reserving with Quinn Luxurious. Here are your booking details."
+        title={slotConflict ? "Payment Received" : isVerifiedPaid ? "Appointment Confirmed" : "Booking Received"}
+        description={
+          slotConflict
+            ? "Your payment was received. Our team will contact you regarding scheduling."
+            : "Thank you for reserving with Quinn Luxurious. Here are your booking details."
+        }
       />
 
       <section className="section-padding bg-paper">
@@ -178,7 +214,9 @@ export default async function AppointmentSuccessPage({ searchParams }: PageProps
           <div className="w-full max-w-xl">
             <Card className="p-8 text-center sm:p-10 shadow-card rounded-3xl border-gold/20">
               <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-gold/15 text-gold-dark ring-4 ring-gold/20">
-                {isVerifiedPaid ? (
+                {slotConflict ? (
+                  <Clock className="h-8 w-8 stroke-[2.5] text-amber-600" />
+                ) : isVerifiedPaid ? (
                   <Check className="h-8 w-8 stroke-[2.5]" />
                 ) : (
                   <Clock className="h-8 w-8 stroke-[2.5]" />
@@ -186,11 +224,17 @@ export default async function AppointmentSuccessPage({ searchParams }: PageProps
               </span>
 
               <h2 className="mt-6 font-display text-3xl font-semibold text-ink">
-                {isVerifiedPaid ? "Payment Confirmed!" : "Payment Processing"}
+                {slotConflict
+                  ? "Payment Received"
+                  : isVerifiedPaid
+                  ? "Payment Confirmed!"
+                  : "Payment Processing"}
               </h2>
 
               <p className="mt-3 text-sm leading-relaxed text-ink-soft">
-                {isVerifiedPaid
+                {slotConflict
+                  ? "Your payment was received successfully! However, your previously selected time slot was taken while payment was in progress. Our salon team will contact you directly to reschedule your booking or provide a full refund."
+                  : isVerifiedPaid
                   ? "Your Stripe test payment was verified successfully and your appointment slot is secured."
                   : "We are awaiting final webhook confirmation from Stripe. You will receive an email once the transaction is complete."}
               </p>
@@ -227,7 +271,11 @@ export default async function AppointmentSuccessPage({ searchParams }: PageProps
                   <div className="flex justify-between">
                     <span className="text-ink-soft">Payment Status:</span>
                     <span className="font-semibold text-gold-dark">
-                      {isVerifiedPaid ? "Paid in full (Stripe Test)" : "Awaiting Confirmation"}
+                      {slotConflict
+                        ? "Payment Received — Salon Contacting (Refund / Reschedule)"
+                        : isVerifiedPaid
+                        ? "Paid in full (Stripe Test)"
+                        : "Awaiting Confirmation"}
                     </span>
                   </div>
                 </div>

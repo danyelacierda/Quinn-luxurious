@@ -35,10 +35,13 @@ export async function updateAppointmentStatus(
   const { userId } = await auth();
 
   // If completing appointment, deduct inventory first to prevent negative stock
+  // WHAT: Deducts inventory items configured for the completed appointment's service.
+  // WHY: Enforces automatic usage tracking and blocks completion if stock is insufficient (preventing negative stock).
+  // WHO: Admins only. Enforced at function start via requireAdmin(), which requires an "admin" role resolved via verified ADMIN_EMAILS email, Clerk publicMetadata role, or Clerk session claims role.
   if (status === "completed") {
-    const { deductInventoryForCompletedAppointment } = await import("@/lib/actions/inventory");
+    const { deductInventoryForCompletedAppointment } = await import("@/lib/inventory/deduct");
     const deductionRes = await deductInventoryForCompletedAppointment(appointmentId, userId || undefined);
-    if (deductionRes.error) {
+    if (deductionRes.error && deductionRes.blocking !== false) {
       return { error: deductionRes.error };
     }
   }
@@ -219,9 +222,13 @@ export async function markAppointmentCompletedByStaff(
   }
 
   // Deduct inventory before completing
-  const { deductInventoryForCompletedAppointment } = await import("@/lib/actions/inventory");
+  // WHAT: Deducts inventory items configured for the completed appointment's service.
+  // WHY: Records product consumption upon appointment completion and stops completion if stock is depleted.
+  // WHO: Assigned Staff members or Admins only. Enforced above via Clerk auth() session verification, checking the staff table for an active profile (is_active = true),
+  //      and confirming appt.staff_id === staffRecord.id (or caller is admin resolved via getCurrentUserRole()).
+  const { deductInventoryForCompletedAppointment } = await import("@/lib/inventory/deduct");
   const deductionRes = await deductInventoryForCompletedAppointment(appointmentId, userId || undefined);
-  if (deductionRes.error) {
+  if (deductionRes.error && deductionRes.blocking !== false) {
     return { error: deductionRes.error };
   }
 

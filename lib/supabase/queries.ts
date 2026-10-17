@@ -1,4 +1,4 @@
-﻿import { auth } from "@clerk/nextjs/server";
+import { auth } from "@clerk/nextjs/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Tables } from "@/lib/supabase/types";
@@ -368,36 +368,20 @@ export async function getCustomers(): Promise<CustomerWithStats[]> {
  * Business hours used to generate bookable time slots.
  */
 export { BUSINESS_HOURS, generateSlotsForDate } from "@/lib/businessHours";
-import { BUSINESS_HOURS, generateSlotsForDate } from "@/lib/businessHours";
+import { BUSINESS_HOURS, generateSlotsForDate, filterAvailableSlots } from "@/lib/businessHours";
+import { getBookedSlots } from "@/lib/appointments/booked-slots";
 
 export async function getAvailableSlots(
   dateISO: string,
   staffId: string | null,
   durationMinutes: number
 ): Promise<string[]> {
-  const supabase = await createClient();
   const date = new Date(`${dateISO}T00:00:00`);
   const allSlots = generateSlotsForDate(date, durationMinutes);
   if (allSlots.length === 0) return [];
 
-  let query = supabase
-    .from("appointments")
-    .select("appointment_time, staff_id")
-    .eq("appointment_date", dateISO)
-    .neq("status", "cancelled");
-
-  if (staffId) {
-    query = query.eq("staff_id", staffId);
-  }
-
-  const { data, error } = await query;
-  if (error) {
-    console.error("getAvailableSlots:", error.message);
-    return allSlots;
-  }
-
-  const taken = new Set((data ?? []).map((row) => row.appointment_time));
-  return allSlots.filter((slot) => !taken.has(slot));
+  const booked = await getBookedSlots(dateISO, staffId);
+  return filterAvailableSlots(allSlots, booked, staffId);
 }
 
 import type { 
