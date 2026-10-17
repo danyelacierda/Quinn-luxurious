@@ -8,6 +8,9 @@ import {
   getCustomers,
   getGalleryItems,
   getAllPromotions,
+  getAllInventoryItems,
+  getServiceRecipes,
+  getInventoryMovements,
 } from "@/lib/supabase/queries";
 import { requireAdmin } from "@/lib/auth";
 
@@ -17,18 +20,31 @@ export default async function AdminPage() {
     redirect("/");
   }
 
-  const [appointments, services, staff, customers, gallery, promotions] = await Promise.all([
+  const [
+    appointments,
+    services,
+    staff,
+    customers,
+    gallery,
+    promotions,
+    inventoryItems,
+    recipes,
+    movements,
+  ] = await Promise.all([
     getAllAppointments(),
     getAllServices(),
     getAllStaff(),
     getCustomers(),
     getGalleryItems(),
     getAllPromotions(),
+    getAllInventoryItems(),
+    getServiceRecipes(),
+    getInventoryMovements(),
   ]);
 
   return (
     <>
-      <PageHero eyebrow="Staff Only" title="Admin Dashboard" description="Manage bookings, services, staff, and content." />
+      <PageHero eyebrow="Staff Only" title="Admin Dashboard" description="Manage bookings, services, staff, inventory, and content." />
 
       <section className="section-padding bg-paper">
         <div className="container">
@@ -39,6 +55,9 @@ export default async function AdminPage() {
             customers={customers}
             gallery={gallery}
             promotions={promotions}
+            inventoryItems={inventoryItems}
+            recipes={recipes}
+            movements={movements}
           />
         </div>
       </section>
