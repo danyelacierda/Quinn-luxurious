@@ -18,17 +18,44 @@ describe("Customer Experience & Calendar Logic", () => {
       assert.equal(img, "https://example.com/custom-lift.jpg");
     });
 
-    test("falls back to category defaults when image_url is missing or empty", () => {
+    test("resolves bespoke unique photos for each individual salon service", () => {
       assert.equal(
-        imageForService({ name: "Classic Full Set", category: "Eyelash Extensions", image_url: null }),
+        imageForService({ name: "Eyelash Extensions", category: "Eyelash Extensions" }),
         "/gallery/lash_extensions.jpg"
       );
       assert.equal(
-        imageForService({ name: "Keratin Lash Lift", category: "Lash Lift", image_url: "" }),
+        imageForService({ name: "Brow Lamination", category: "Lash Lift" }),
         "/gallery/brow_lamination.jpg"
       );
       assert.equal(
-        imageForService({ name: "Gel Extensions", category: "Nails", image_url: undefined }),
+        imageForService({ name: "Lash Lift", category: "Lash Lift" }),
+        "/gallery/lash_lift.jpg"
+      );
+      assert.equal(
+        imageForService({ name: "Gel Extensions", category: "Nails" }),
+        "/gallery/gel_extensions.jpg"
+      );
+      assert.equal(
+        imageForService({ name: "Nail Art", category: "Nails" }),
+        "/gallery/nail_art.jpg"
+      );
+      assert.equal(
+        imageForService({ name: "Nail Services", category: "Nails" }),
+        "/gallery/nail_services.jpg"
+      );
+    });
+
+    test("falls back to category defaults when image_url is missing and name is unmapped", () => {
+      assert.equal(
+        imageForService({ name: "Special Package", category: "Eyelash Extensions", image_url: null }),
+        "/gallery/lash_extensions.jpg"
+      );
+      assert.equal(
+        imageForService({ name: "Special Package", category: "Lash Lift", image_url: "" }),
+        "/gallery/lash_lift.jpg"
+      );
+      assert.equal(
+        imageForService({ name: "Special Package", category: "Nails", image_url: undefined }),
         "/gallery/nail_art.jpg"
       );
     });
@@ -44,7 +71,7 @@ describe("Customer Experience & Calendar Logic", () => {
       );
       assert.equal(
         imageForService({ name: "Luxury French Manicure & Polish", category: null }),
-        "/gallery/nail_art.jpg"
+        "/gallery/nail_services.jpg"
       );
       assert.equal(
         imageForService({ name: "General Beauty Consultation", category: null }),
@@ -64,7 +91,7 @@ describe("Customer Experience & Calendar Logic", () => {
 
       assert.equal(imageForService(srv), "/gallery/lash_extensions.jpg");
       assert.equal(DEFAULT_CATEGORY_IMAGES["Eyelash Extensions"], "/gallery/lash_extensions.jpg");
-      assert.equal(DEFAULT_CATEGORY_IMAGES["Lash Lift"], "/gallery/brow_lamination.jpg");
+      assert.equal(DEFAULT_CATEGORY_IMAGES["Lash Lift"], "/gallery/lash_lift.jpg");
       assert.equal(DEFAULT_CATEGORY_IMAGES["Nails"], "/gallery/nail_art.jpg");
     });
   });
