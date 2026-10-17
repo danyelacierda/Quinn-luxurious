@@ -1,5 +1,6 @@
-import { auth } from "@clerk/nextjs/server";
+﻿import { auth } from "@clerk/nextjs/server";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import type { Tables } from "@/lib/supabase/types";
 
 export type ServiceRow = Tables<"services">;
@@ -111,7 +112,7 @@ export async function getCurrentUser(): Promise<UserRow | null> {
   const { userId } = await auth();
   if (!userId) return null;
 
-  const supabase = await createClient();
+  const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("users")
     .select("*")
@@ -123,7 +124,7 @@ export async function getCurrentUser(): Promise<UserRow | null> {
     return null;
   }
 
-  // Local development auto-sync workaround since webhooks don't fire without ngrok
+  // Local development auto-sync workaround if webhooks are not yet connected
   if (!data) {
     const { currentUser } = await import("@clerk/nextjs/server");
     const clerkUser = await currentUser();
@@ -139,7 +140,7 @@ export async function getCurrentUser(): Promise<UserRow | null> {
         })
         .select()
         .single();
-        
+
       if (!insertError && newData) {
         return newData;
       }
@@ -159,11 +160,15 @@ export type AppointmentWithDetails = AppointmentRow & {
   needs_refund?: boolean;
 };
 
+/**
+ * Customer appointment retrieval:
+ * Strict server check: Only returns appointments belonging to the logged-in user.
+ */
 export async function getUserAppointments(): Promise<AppointmentWithDetails[]> {
   const { userId } = await auth();
   if (!userId) return [];
 
-  const supabase = await createClient();
+  const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("appointments")
     .select("*, services(name, duration_minutes, price), staff(full_name)")
@@ -178,8 +183,19 @@ export async function getUserAppointments(): Promise<AppointmentWithDetails[]> {
   return (data ?? []) as unknown as AppointmentWithDetails[];
 }
 
+/**
+ * Admin appointment retrieval:
+ * Strict server check: Requires admin authorization.
+ */
 export async function getAllAppointments(): Promise<AppointmentWithDetails[]> {
-  const supabase = await createClient();
+  const { requireAdmin } = await import("@/lib/auth");
+  const isAdmin = await requireAdmin();
+  if (!isAdmin) {
+    console.warn("Unauthorized attempt to access getAllAppointments");
+    return [];
+  }
+
+  const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("appointments")
     .select("*, services(name, duration_minutes, price), staff(full_name)")
@@ -203,15 +219,105 @@ export async function getAllServices(): Promise<ServiceRow[]> {
   return data ?? [];
 }
 
-export async function getAllStaff(): Promise<StaffRow[]> {
-  const supabase = await createClient();
-  const { data, error } = await supabase.from("staff").select("*").order("full_name");
-  if (error) {
-    console.error("getAllStaff:", error.message);
+export type StaffWithStats = StaffRow & {
+  assigned_count: number;
+  upcoming_count: number;
+  user_email?: string | null;
+};
+
+export async function getAllStaff(): Promise<StaffWithStats[]> {
+  const supabase = createAdminClient();
+  const { data: staff, error } = await supabase.from("staff").select("*").order("full_name");
+  if (error || !staff) {
+    console.error("getAllStaff:", error?.message);
     return [];
   }
-  return data ?? [];
+
+  const todayManila = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+
+  const { data: appts } = await supabase
+    .from("appointments")
+    .select("staff_id, appointment_date, status");
+
+  const { data: users } = await supabase
+    .from("users")
+    .select("id, email");
+
+  const emailMap = new Map<string, string>();
+  (users ?? []).forEach((u) => emailMap.set(u.id, u.email));
+
+  const totalCounts = new Map<string, number>();
+  const upcomingCounts = new Map<string, number>();
+
+  (appts ?? []).forEach((a) => {
+    if (a.staff_id) {
+      totalCounts.set(a.staff_id, (totalCounts.get(a.staff_id) ?? 0) + 1);
+      if (
+        a.appointment_date >= todayManila &&
+        ["confirmed", "pending", "pending_payment"].includes(a.status)
+      ) {
+        upcomingCounts.set(a.staff_id, (upcomingCounts.get(a.staff_id) ?? 0) + 1);
+      }
+    }
+  });
+
+  return staff.map((s) => ({
+    ...s,
+    assigned_count: totalCounts.get(s.id) ?? 0,
+    upcoming_count: upcomingCounts.get(s.id) ?? 0,
+    user_email: s.user_id ? emailMap.get(s.user_id) ?? null : null,
+  }));
 }
+
+export type StaffPortalData = {
+  staff: StaffRow | null;
+  appointments: AppointmentWithDetails[];
+};
+
+/**
+ * Staff portal retrieval:
+ * Strict server check: Only returns appointments assigned to the logged-in staff member's profile.
+ */
+export async function getStaffAppointments(): Promise<StaffPortalData> {
+  const { userId } = await auth();
+  if (!userId) return { staff: null, appointments: [] };
+
+  const supabase = createAdminClient();
+
+  // Find staff record linked to this Clerk user
+  const { data: staff, error: staffErr } = await supabase
+    .from("staff")
+    .select("*")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (staffErr || !staff) {
+    return { staff: null, appointments: [] };
+  }
+
+  const { data: appts, error: apptErr } = await supabase
+    .from("appointments")
+    .select("*, services(name, duration_minutes, price), staff(full_name)")
+    .eq("staff_id", staff.id)
+    .order("appointment_date", { ascending: true })
+    .order("appointment_time", { ascending: true });
+
+  if (apptErr) {
+    console.error("getStaffAppointments:", apptErr.message);
+    return { staff, appointments: [] };
+  }
+
+  return {
+    staff,
+    appointments: (appts ?? []) as unknown as AppointmentWithDetails[],
+  };
+}
+
 
 export async function getAllPromotions(): Promise<PromotionRow[]> {
   const supabase = await createClient();
@@ -225,8 +331,19 @@ export async function getAllPromotions(): Promise<PromotionRow[]> {
 
 export type CustomerWithStats = UserRow & { appointment_count: number };
 
+/**
+ * Admin customer retrieval:
+ * Strict server check: Requires admin authorization.
+ */
 export async function getCustomers(): Promise<CustomerWithStats[]> {
-  const supabase = await createClient();
+  const { requireAdmin } = await import("@/lib/auth");
+  const isAdmin = await requireAdmin();
+  if (!isAdmin) {
+    console.warn("Unauthorized attempt to access getCustomers");
+    return [];
+  }
+
+  const supabase = createAdminClient();
   const { data: users, error } = await supabase
     .from("users")
     .select("*")
@@ -249,53 +366,10 @@ export async function getCustomers(): Promise<CustomerWithStats[]> {
 
 /**
  * Business hours used to generate bookable time slots.
- * Kept here (not in the DB) since it rarely changes — edit freely.
  */
-export const BUSINESS_HOURS: Record<number, { open: string; close: string } | null> = {
-  0: { open: "11:00", close: "16:00" }, // Sunday
-  1: { open: "09:00", close: "19:00" },
-  2: { open: "09:00", close: "19:00" },
-  3: { open: "09:00", close: "19:00" },
-  4: { open: "09:00", close: "19:00" },
-  5: { open: "09:00", close: "19:00" },
-  6: { open: "09:00", close: "18:00" }, // Saturday
-};
+export { BUSINESS_HOURS, generateSlotsForDate } from "@/lib/businessHours";
+import { BUSINESS_HOURS, generateSlotsForDate } from "@/lib/businessHours";
 
-function to12Hour(time24: string): string {
-  const [h, m] = time24.split(":").map(Number);
-  const period = h >= 12 ? "PM" : "AM";
-  const hour = h % 12 === 0 ? 12 : h % 12;
-  return `${hour}:${m.toString().padStart(2, "0")} ${period}`;
-}
-
-/**
- * Generates every bookable slot start-time label for a given date,
- * spaced by `stepMinutes`, that leaves enough room for `durationMinutes`
- * before closing.
- */
-export function generateSlotsForDate(date: Date, durationMinutes: number, stepMinutes = 30): string[] {
-  const hours = BUSINESS_HOURS[date.getDay()];
-  if (!hours) return [];
-
-  const [openH, openM] = hours.open.split(":").map(Number);
-  const [closeH, closeM] = hours.close.split(":").map(Number);
-  const openMinutes = openH * 60 + openM;
-  const closeMinutes = closeH * 60 + closeM;
-
-  const slots: string[] = [];
-  for (let t = openMinutes; t + durationMinutes <= closeMinutes; t += stepMinutes) {
-    const h = Math.floor(t / 60);
-    const m = t % 60;
-    slots.push(to12Hour(`${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`));
-  }
-  return slots;
-}
-
-/**
- * Returns the slot labels for `date` that are NOT already booked for the
- * given staff member (or, if `staffId` is null, not booked by ANY staff —
- * used for the "any available artist" option).
- */
 export async function getAvailableSlots(
   dateISO: string,
   staffId: string | null,
@@ -324,4 +398,82 @@ export async function getAvailableSlots(
 
   const taken = new Set((data ?? []).map((row) => row.appointment_time));
   return allSlots.filter((slot) => !taken.has(slot));
+}
+
+import type { 
+  InventoryItemRow, 
+  ServiceRecipeRow, 
+  InventoryMovementRow, 
+  AppointmentDeductionRow 
+} from "@/lib/supabase/types";
+
+export type InventoryItemWithDetails = InventoryItemRow & {
+  is_low_stock: boolean;
+};
+
+export type ServiceRecipeWithDetails = ServiceRecipeRow & {
+  services?: { name: string; category: string } | null;
+  inventory_items?: { name: string; unit: string; current_stock: number } | null;
+};
+
+export type InventoryMovementWithDetails = InventoryMovementRow & {
+  inventory_items?: { name: string; unit: string } | null;
+  services?: { name: string } | null;
+  staff?: { full_name: string } | null;
+  appointments?: { full_name: string; appointment_date: string; appointment_time: string } | null;
+};
+
+/**
+ * Fetch all inventory items for admin dashboard
+ */
+export async function getAllInventoryItems(): Promise<InventoryItemWithDetails[]> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("inventory_items")
+    .select("*")
+    .order("category")
+    .order("name");
+
+  if (error) {
+    // If table doesn't exist yet in remote Supabase (review-only migration)
+    return [];
+  }
+
+  return (data ?? []).map((item) => ({
+    ...item,
+    is_low_stock: item.current_stock <= item.low_stock_threshold,
+  }));
+}
+
+/**
+ * Fetch service recipes (products used per service)
+ */
+export async function getServiceRecipes(): Promise<ServiceRecipeWithDetails[]> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("service_inventory_recipes")
+    .select("*, services(name, category), inventory_items(name, unit, current_stock)")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    return [];
+  }
+  return (data ?? []) as unknown as ServiceRecipeWithDetails[];
+}
+
+/**
+ * Fetch recent inventory movements (stock movement audit log)
+ */
+export async function getInventoryMovements(limit = 100): Promise<InventoryMovementWithDetails[]> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("inventory_movements")
+    .select("*, inventory_items(name, unit), services(name), staff(full_name), appointments(full_name, appointment_date, appointment_time)")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    return [];
+  }
+  return (data ?? []) as unknown as InventoryMovementWithDetails[];
 }
