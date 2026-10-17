@@ -203,6 +203,13 @@ export async function createAppointment(formData: FormData): Promise<BookingResu
 
   if (error || !data) {
     console.error("createAppointment error:", error?.message);
+    if (error && (error as { code?: string }).code === "23505") {
+      return {
+        ok: false,
+        error: "That time slot is already booked. Please pick another.",
+        slotTaken: true,
+      };
+    }
     return { ok: false, error: "Failed to book appointment. Please try again." };
   }
 
