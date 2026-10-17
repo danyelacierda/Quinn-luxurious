@@ -130,8 +130,9 @@ describe("Stripe Test-Mode Payments Suite", () => {
         // Check database update error simulation (e.g. 23505 unique slot collision on paid-after-cancelled)
         if (options.mockDbError) {
           if (options.mockDbError.code === "23505") {
-            // Flag needs_refund = true, do not change status or payment_status, return HTTP 200
+            // Flag needs_refund = true, record payment_reference, do not change status or payment_status, return HTTP 200
             appt.needs_refund = true;
+            appt.payment_reference = session.payment_intent ? String(session.payment_intent) : session.id;
             return {
               status: 200,
               received: true,
@@ -469,10 +470,11 @@ describe("Stripe Test-Mode Payments Suite", () => {
       assert.equal(result.slotConflict, true);
       assert.equal(result.needs_refund, true);
 
-      // 2. Appointment row is flagged for refund
+      // 2. Appointment row is flagged for refund and payment_reference is recorded
       assert.equal(cancelledAppt.needs_refund, true);
+      assert.equal(cancelledAppt.payment_reference, "pi_test_conflict_123");
 
-      // 3. Status and payment_status are NOT overwritten with confirmed/fully_paid
+      // 3. Status and payment_status are NOT overwritten with confirmed/fully_paid (unchanged)
       assert.equal(cancelledAppt.status, "cancelled");
       assert.equal(cancelledAppt.payment_status, "expired");
     });
@@ -486,6 +488,9 @@ describe("Stripe Test-Mode Payments Suite", () => {
         if (mockDbError?.code === "23505") {
           slotConflict = true;
           appt.needs_refund = true;
+          appt.payment_reference = session.payment_intent
+            ? String(session.payment_intent)
+            : session.id;
         } else if (appt.payment_status === "fully_paid") {
           isVerifiedPaid = true;
         }
@@ -520,11 +525,16 @@ describe("Stripe Test-Mode Payments Suite", () => {
       // 1. Did not crash
       assert.ok(result);
 
-      // 2. Flags needs_refund = true
+      // 2. Flags needs_refund = true and records payment_reference
       assert.equal(result.slotConflict, true);
       assert.equal(result.needsRefund, true);
+      assert.equal(appt.payment_reference, "cs_test_fallback");
 
-      // 3. Displays clear user-facing notice explaining payment was received and salon will contact
+      // 3. Status and payment_status are unchanged
+      assert.equal(appt.status, "cancelled");
+      assert.equal(appt.payment_status, "expired");
+
+      // 4. Displays clear user-facing notice explaining payment was received and salon will contact
       assert.equal(result.uiTitle, "Payment Received");
       assert.match(result.userNotice, /salon team will contact you directly to reschedule your booking or provide a full refund/i);
     });

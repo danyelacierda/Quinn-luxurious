@@ -43,7 +43,7 @@ BEGIN
           AND t.relname = 'appointments'
           AND c.contype = 'u'
           AND (
-              SELECT array_agg(a.attname ORDER BY a.attname)
+              SELECT array_agg(a.attname::text ORDER BY a.attname::text)
               FROM pg_attribute a
               WHERE a.attrelid = c.conrelid
                 AND a.attnum = ANY(c.conkey)

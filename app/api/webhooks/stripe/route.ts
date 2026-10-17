@@ -164,7 +164,10 @@ export async function POST(req: Request) {
             );
             const { error: refundFlagErr } = await supabaseAdmin
               .from("appointments")
-              .update({ needs_refund: true })
+              .update({
+                needs_refund: true,
+                payment_reference: paymentIntentId || session.id,
+              })
               .eq("id", appointmentId);
 
             if (refundFlagErr) {

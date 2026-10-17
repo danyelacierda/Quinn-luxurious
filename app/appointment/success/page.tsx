@@ -134,7 +134,12 @@ export default async function AppointmentSuccessPage({ searchParams }: PageProps
                 slotConflict = true;
                 const { error: refundErr } = await supabaseAdmin
                   .from("appointments")
-                  .update({ needs_refund: true })
+                  .update({
+                    needs_refund: true,
+                    payment_reference: session.payment_intent
+                      ? String(session.payment_intent)
+                      : session.id,
+                  })
                   .eq("id", appointmentId);
 
                 if (refundErr) {
