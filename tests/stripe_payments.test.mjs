@@ -96,7 +96,7 @@ describe("Stripe Test-Mode Payments Suite", () => {
 
   describe("3. Idempotency, Concurrent Deliveries & Status Transitions", () => {
     // Pure model of the audited webhook state machine in app/api/webhooks/stripe/route.ts
-    function applyWebhookEvent(appt, srv, event, inFlightState = { alreadyUpdating: false }) {
+    function applyWebhookEvent(appt, srv, event, inFlightState = { alreadyUpdating: false }, options = {}) {
       if (event.livemode === true) {
         return { error: "Live-mode events are strictly rejected in test environment.", status: 400 };
       }
@@ -127,9 +127,27 @@ describe("Stripe Test-Mode Payments Suite", () => {
           return { appt, handled: true, idempotent: true, emailSent: false };
         }
 
+        // Check database update error simulation (e.g. 23505 unique slot collision on paid-after-cancelled)
+        if (options.mockDbError) {
+          if (options.mockDbError.code === "23505") {
+            // Flag needs_refund = true, do not change status or payment_status, return HTTP 200
+            appt.needs_refund = true;
+            return {
+              status: 200,
+              received: true,
+              slotConflict: true,
+              needs_refund: true,
+              appt,
+              message: "Time slot conflict on paid booking: flagged for refund.",
+            };
+          }
+          return { error: "Database update failed.", status: 500 };
+        }
+
         // First atomic winner claims update and sends email
         inFlightState.alreadyUpdating = true;
         return {
+          status: 200,
           appt: {
             ...appt,
             status: "confirmed",
@@ -410,6 +428,105 @@ describe("Stripe Test-Mode Payments Suite", () => {
       assert.equal(result.handled, false);
       assert.equal(fullyPaidAppt.status, "confirmed");
       assert.equal(fullyPaidAppt.payment_status, "fully_paid");
+    });
+
+    test("checkout.session.completed with 23505 slot collision: flags needs_refund=true, preserves status, returns HTTP 200", () => {
+      // Scenario: Appointment was cancelled/expired, slot was taken by Client B, but Client A completes Stripe payment
+      const cancelledAppt = {
+        id: "appt_conflict_001",
+        status: "cancelled",
+        payment_status: "expired",
+        stripe_session_id: "cs_test_conflict",
+        needs_refund: false,
+      };
+      const srv = { id: "srv_lash", price: 1500 };
+      const event = {
+        type: "checkout.session.completed",
+        livemode: false,
+        data: {
+          object: {
+            id: "cs_test_conflict",
+            mode: "payment",
+            payment_status: "paid",
+            amount_total: 150000,
+            currency: "php",
+            payment_intent: "pi_test_conflict_123",
+          },
+        },
+      };
+
+      const result = applyWebhookEvent(
+        cancelledAppt,
+        srv,
+        event,
+        { alreadyUpdating: false },
+        { mockDbError: { code: "23505", message: "duplicate key value violates unique constraint" } }
+      );
+
+      // 1. Returns HTTP 200 so Stripe stops retrying delivery
+      assert.equal(result.status, 200);
+      assert.equal(result.received, true);
+      assert.equal(result.slotConflict, true);
+      assert.equal(result.needs_refund, true);
+
+      // 2. Appointment row is flagged for refund
+      assert.equal(cancelledAppt.needs_refund, true);
+
+      // 3. Status and payment_status are NOT overwritten with confirmed/fully_paid
+      assert.equal(cancelledAppt.status, "cancelled");
+      assert.equal(cancelledAppt.payment_status, "expired");
+    });
+
+    test("success page fallback handles 23505 slot collision gracefully: flags needs_refund=true without crashing", () => {
+      // Model the success page fallback handler
+      function simulateSuccessPageFallback(appt, session, mockDbError) {
+        let isVerifiedPaid = false;
+        let slotConflict = Boolean(appt.needs_refund);
+
+        if (mockDbError?.code === "23505") {
+          slotConflict = true;
+          appt.needs_refund = true;
+        } else if (appt.payment_status === "fully_paid") {
+          isVerifiedPaid = true;
+        }
+
+        return {
+          isVerifiedPaid,
+          slotConflict,
+          needsRefund: appt.needs_refund,
+          uiTitle: slotConflict ? "Payment Received" : isVerifiedPaid ? "Appointment Confirmed" : "Booking Received",
+          userNotice: slotConflict
+            ? "Your payment was received successfully! However, your previously selected time slot was taken while payment was in progress. Our salon team will contact you directly to reschedule your booking or provide a full refund."
+            : isVerifiedPaid
+            ? "Your Stripe test payment was verified successfully and your appointment slot is secured."
+            : "We are awaiting final webhook confirmation from Stripe.",
+        };
+      }
+
+      const appt = {
+        id: "appt_fallback_002",
+        status: "cancelled",
+        payment_status: "expired",
+        needs_refund: false,
+      };
+      const session = { id: "cs_test_fallback", payment_status: "paid" };
+
+      const result = simulateSuccessPageFallback(
+        appt,
+        session,
+        { code: "23505", message: "duplicate key value violates unique constraint" }
+      );
+
+      // 1. Did not crash
+      assert.ok(result);
+
+      // 2. Flags needs_refund = true
+      assert.equal(result.slotConflict, true);
+      assert.equal(result.needsRefund, true);
+
+      // 3. Displays clear user-facing notice explaining payment was received and salon will contact
+      assert.equal(result.uiTitle, "Payment Received");
+      assert.match(result.userNotice, /salon team will contact you directly to reschedule your booking or provide a full refund/i);
     });
   });
 

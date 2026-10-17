@@ -3,39 +3,55 @@
 -- File: supabase/migrations/20261018000004_migration_c_partial_unique_slots.sql
 --
 -- PURPOSE:
--- Replace the table-level UNIQUE constraint on appointments:
---   unique (appointment_date, appointment_time, staff_id)
+-- Replace any table-level UNIQUE constraint on appointments:
+--   (appointment_date, appointment_time, staff_id)
 -- with a partial UNIQUE index that enforces slot uniqueness ONLY on
 -- active bookings (WHERE status <> 'cancelled').
 --
 -- WHY THIS IS NEEDED:
 -- The original table-level constraint applied to ALL rows including cancelled
--- appointments. When a customer or staff member cancelled an appointment,
--- the time slot remained blocked at the database constraint level, preventing
--- new bookings for that same slot. This partial unique index frees cancelled
+-- appointments. When an appointment was cancelled, the slot remained blocked
+-- at the database constraint level. This partial unique index frees cancelled
 -- slots for immediate rebooking while preventing double-bookings among active slots.
 --
--- CONSTRAINT NAME NOTE:
--- In 0001_init.sql, the constraint was defined anonymously as:
---   unique (appointment_date, appointment_time, staff_id)
--- PostgreSQL defaults anonymous multi-column unique constraints to:
---   <table>_<col1>_<col2>_<col3>_key
--- which is: appointments_appointment_date_appointment_time_staff_id_key.
--- IMPORTANT: Confirm this constraint name on production using:
---   SELECT conname FROM pg_constraint
---   WHERE conrelid = 'public.appointments'::regclass AND contype = 'u';
+-- DYNAMIC CONSTRAINT DROP (BY COLUMNS):
+-- Rather than assuming a hardcoded constraint name (which can vary depending on
+-- PostgreSQL version, initial migration history, or custom names in production),
+-- Step 1 dynamically queries pg_constraint + conkey to find any UNIQUE ('u')
+-- constraint on public.appointments whose column names match exactly
+-- (appointment_date, appointment_time, staff_id), and drops it via EXECUTE format(%I).
 --
 -- PROPERTIES:
 -- - Wrapped in a single transaction (BEGIN ... COMMIT)
--- - Idempotent (DROP CONSTRAINT IF EXISTS, CREATE UNIQUE INDEX IF NOT EXISTS)
+-- - Idempotent
 -- - Completely non-destructive to existing row data
 -- ============================================================
 
 BEGIN;
 
--- 1. Drop the legacy table-level unique constraint (blocks cancelled slots)
-ALTER TABLE public.appointments 
-  DROP CONSTRAINT IF EXISTS appointments_appointment_date_appointment_time_staff_id_key;
+-- 1. Dynamically find and drop any unique constraint on (appointment_date, appointment_time, staff_id)
+DO $$
+DECLARE
+    r RECORD;
+BEGIN
+    FOR r IN
+        SELECT c.conname
+        FROM pg_constraint c
+        JOIN pg_class t ON c.conrelid = t.oid
+        JOIN pg_namespace n ON t.relnamespace = n.oid
+        WHERE n.nspname = 'public'
+          AND t.relname = 'appointments'
+          AND c.contype = 'u'
+          AND (
+              SELECT array_agg(a.attname ORDER BY a.attname)
+              FROM pg_attribute a
+              WHERE a.attrelid = c.conrelid
+                AND a.attnum = ANY(c.conkey)
+          ) = ARRAY['appointment_date', 'appointment_time', 'staff_id']
+    LOOP
+        EXECUTE format('ALTER TABLE public.appointments DROP CONSTRAINT IF EXISTS %I', r.conname);
+    END LOOP;
+END $$;
 
 -- 2. Create the partial unique index that excludes cancelled appointments
 CREATE UNIQUE INDEX IF NOT EXISTS idx_appointments_active_slots 

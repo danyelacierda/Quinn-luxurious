@@ -88,6 +88,7 @@ export type Database = {
           payment_reference: string | null;
           stripe_session_id?: string | null;
           stripe_payment_intent_id?: string | null;
+          needs_refund?: boolean | null;
           created_at: string;
         };
         Insert: {
@@ -107,6 +108,7 @@ export type Database = {
           payment_reference?: string | null;
           stripe_session_id?: string | null;
           stripe_payment_intent_id?: string | null;
+          needs_refund?: boolean | null;
         };
         Relationships: [];
         Update: Partial<Database["public"]["Tables"]["appointments"]["Insert"]>;

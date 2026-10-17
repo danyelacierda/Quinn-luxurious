@@ -158,6 +158,29 @@ export async function POST(req: Request) {
           .select("id");
 
         if (updateErr) {
+          if ((updateErr as { code?: string }).code === "23505") {
+            console.error(
+              `[stripeWebhook:checkout.session.completed] slot conflict (23505), flagging for refund, appointment_id: ${appointmentId}`
+            );
+            const { error: refundFlagErr } = await supabaseAdmin
+              .from("appointments")
+              .update({ needs_refund: true })
+              .eq("id", appointmentId);
+
+            if (refundFlagErr) {
+              console.error(
+                `[stripeWebhook:checkout.session.completed] table: appointments, operation: update (needs_refund), appointment_id: ${appointmentId}, error: ${refundFlagErr.message}`
+              );
+            }
+
+            return NextResponse.json({
+              received: true,
+              slotConflict: true,
+              needs_refund: true,
+              message: "Time slot conflict on paid booking: flagged for refund.",
+            });
+          }
+
           console.error("Database update failed on webhook:", updateErr.message);
           // Return 500 so Stripe automatically retries the delivery
           return NextResponse.json(
