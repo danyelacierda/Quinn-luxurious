@@ -127,9 +127,11 @@ describe("Stripe Test-Mode Payments Suite", () => {
           return { appt, handled: true, idempotent: true, emailSent: false };
         }
 
-        // Check database update error simulation (e.g. 23505 unique slot collision on paid-after-cancelled)
+        // Check database update error simulation (e.g. 23505 unique slot collision vs duplicate payment reference)
         if (options.mockDbError) {
-          if (options.mockDbError.code === "23505") {
+          const errCode = options.mockDbError.code;
+          const errText = `${options.mockDbError.message || ""} ${options.mockDbError.details || ""}`;
+          if (errCode === "23505" && errText.includes("appointments_no_double_booking")) {
             // Flag needs_refund = true, record payment_reference, do not change status or payment_status, return HTTP 200
             appt.needs_refund = true;
             appt.payment_reference = session.payment_intent ? String(session.payment_intent) : session.id;
@@ -141,6 +143,11 @@ describe("Stripe Test-Mode Payments Suite", () => {
               appt,
               message: "Time slot conflict on paid booking: flagged for refund.",
             };
+          }
+          if (errCode === "23505") {
+            // Non-slot-conflict 23505 (e.g. duplicate payment_reference index):
+            // Return 500 so Stripe retries, do NOT set needs_refund
+            return { error: "Database update failed.", status: 500, appt };
           }
           return { error: "Database update failed.", status: 500 };
         }
@@ -431,7 +438,7 @@ describe("Stripe Test-Mode Payments Suite", () => {
       assert.equal(fullyPaidAppt.payment_status, "fully_paid");
     });
 
-    test("checkout.session.completed with 23505 slot collision: flags needs_refund=true, preserves status, returns HTTP 200", () => {
+    test("checkout.session.completed with 23505 slot collision (appointments_no_double_booking): flags needs_refund=true, preserves status, returns HTTP 200", () => {
       // Scenario: Appointment was cancelled/expired, slot was taken by Client B, but Client A completes Stripe payment
       const cancelledAppt = {
         id: "appt_conflict_001",
@@ -461,7 +468,12 @@ describe("Stripe Test-Mode Payments Suite", () => {
         srv,
         event,
         { alreadyUpdating: false },
-        { mockDbError: { code: "23505", message: "duplicate key value violates unique constraint" } }
+        {
+          mockDbError: {
+            code: "23505",
+            message: 'duplicate key value violates unique constraint "appointments_no_double_booking"',
+          },
+        }
       );
 
       // 1. Returns HTTP 200 so Stripe stops retrying delivery
@@ -479,13 +491,64 @@ describe("Stripe Test-Mode Payments Suite", () => {
       assert.equal(cancelledAppt.payment_status, "expired");
     });
 
-    test("success page fallback handles 23505 slot collision gracefully: flags needs_refund=true without crashing", () => {
+    test("checkout.session.completed with 23505 payment_reference duplicate (appointments_payment_reference_idx): returns HTTP 500 and does NOT flag needs_refund", () => {
+      // Scenario: A duplicate payment reference collision (not a slot conflict)
+      const appt = {
+        id: "appt_dup_ref_001",
+        status: "pending_payment",
+        payment_status: "pending_payment",
+        stripe_session_id: "cs_test_dupref",
+        needs_refund: false,
+      };
+      const srv = { id: "srv_lash", price: 1500 };
+      const event = {
+        type: "checkout.session.completed",
+        livemode: false,
+        data: {
+          object: {
+            id: "cs_test_dupref",
+            mode: "payment",
+            payment_status: "paid",
+            amount_total: 150000,
+            currency: "php",
+            payment_intent: "pi_test_duplicate_ref",
+          },
+        },
+      };
+
+      const result = applyWebhookEvent(
+        appt,
+        srv,
+        event,
+        { alreadyUpdating: false },
+        {
+          mockDbError: {
+            code: "23505",
+            message: 'duplicate key value violates unique constraint "appointments_payment_reference_idx"',
+          },
+        }
+      );
+
+      // 1. Webhook returns 500 so Stripe retries delivery
+      assert.equal(result.status, 500);
+      assert.equal(result.error, "Database update failed.");
+
+      // 2. Crucially, needs_refund is NOT set
+      assert.equal(appt.needs_refund, false);
+
+      // 3. Status remains unchanged
+      assert.equal(appt.status, "pending_payment");
+      assert.equal(appt.payment_status, "pending_payment");
+    });
+
+    test("success page fallback handles 23505 slot collision (appointments_no_double_booking) gracefully: flags needs_refund=true without crashing", () => {
       // Model the success page fallback handler
       function simulateSuccessPageFallback(appt, session, mockDbError) {
         let isVerifiedPaid = false;
         let slotConflict = Boolean(appt.needs_refund);
 
-        if (mockDbError?.code === "23505") {
+        const errText = `${mockDbError?.message || ""} ${mockDbError?.details || ""}`;
+        if (mockDbError?.code === "23505" && errText.includes("appointments_no_double_booking")) {
           slotConflict = true;
           appt.needs_refund = true;
           appt.payment_reference = session.payment_intent
@@ -499,12 +562,12 @@ describe("Stripe Test-Mode Payments Suite", () => {
           isVerifiedPaid,
           slotConflict,
           needsRefund: appt.needs_refund,
-          uiTitle: slotConflict ? "Payment Received" : isVerifiedPaid ? "Appointment Confirmed" : "Booking Received",
+          uiTitle: slotConflict ? "Payment Received" : isVerifiedPaid ? "Appointment Confirmed" : "Payment Processing",
           userNotice: slotConflict
             ? "Your payment was received successfully! However, your previously selected time slot was taken while payment was in progress. Our salon team will contact you directly to reschedule your booking or provide a full refund."
             : isVerifiedPaid
             ? "Your Stripe test payment was verified successfully and your appointment slot is secured."
-            : "We are awaiting final webhook confirmation from Stripe.",
+            : "We are awaiting final webhook confirmation from Stripe. You will receive an email once the transaction is complete.",
         };
       }
 
@@ -519,7 +582,10 @@ describe("Stripe Test-Mode Payments Suite", () => {
       const result = simulateSuccessPageFallback(
         appt,
         session,
-        { code: "23505", message: "duplicate key value violates unique constraint" }
+        {
+          code: "23505",
+          message: 'duplicate key value violates unique constraint "appointments_no_double_booking"',
+        }
       );
 
       // 1. Did not crash
@@ -537,6 +603,69 @@ describe("Stripe Test-Mode Payments Suite", () => {
       // 4. Displays clear user-facing notice explaining payment was received and salon will contact
       assert.equal(result.uiTitle, "Payment Received");
       assert.match(result.userNotice, /salon team will contact you directly to reschedule your booking or provide a full refund/i);
+    });
+
+    test("success page fallback with 23505 payment_reference duplicate (appointments_payment_reference_idx): does NOT flag needs_refund or slotConflict", () => {
+      function simulateSuccessPageFallback(appt, session, mockDbError) {
+        let isVerifiedPaid = false;
+        let slotConflict = Boolean(appt.needs_refund);
+
+        const errText = `${mockDbError?.message || ""} ${mockDbError?.details || ""}`;
+        if (mockDbError?.code === "23505" && errText.includes("appointments_no_double_booking")) {
+          slotConflict = true;
+          appt.needs_refund = true;
+          appt.payment_reference = session.payment_intent
+            ? String(session.payment_intent)
+            : session.id;
+        } else if (appt.payment_status === "fully_paid") {
+          isVerifiedPaid = true;
+        }
+
+        return {
+          isVerifiedPaid,
+          slotConflict,
+          needsRefund: appt.needs_refund,
+          uiTitle: slotConflict ? "Payment Received" : isVerifiedPaid ? "Appointment Confirmed" : "Payment Processing",
+          userNotice: slotConflict
+            ? "Your payment was received successfully! However, your previously selected time slot was taken while payment was in progress. Our salon team will contact you directly to reschedule your booking or provide a full refund."
+            : isVerifiedPaid
+            ? "Your Stripe test payment was verified successfully and your appointment slot is secured."
+            : "We are awaiting final webhook confirmation from Stripe. You will receive an email once the transaction is complete.",
+        };
+      }
+
+      const appt = {
+        id: "appt_fallback_dup_003",
+        status: "pending_payment",
+        payment_status: "pending",
+        needs_refund: false,
+      };
+      const session = { id: "cs_test_fallback_dup", payment_status: "paid" };
+
+      const result = simulateSuccessPageFallback(
+        appt,
+        session,
+        {
+          code: "23505",
+          message: 'duplicate key value violates unique constraint "appointments_payment_reference_idx"',
+        }
+      );
+
+      // 1. Did not crash
+      assert.ok(result);
+
+      // 2. Crucially, slotConflict is false and needs_refund is NOT set
+      assert.equal(result.slotConflict, false);
+      assert.equal(result.needsRefund, false);
+      assert.equal(appt.needs_refund, false);
+
+      // 3. Status and payment_status remain untouched
+      assert.equal(appt.status, "pending_payment");
+      assert.equal(appt.payment_status, "pending");
+
+      // 4. Displays generic processing notice
+      assert.equal(result.uiTitle, "Payment Processing");
+      assert.match(result.userNotice, /awaiting final webhook confirmation from Stripe/i);
     });
   });
 

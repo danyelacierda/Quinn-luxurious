@@ -209,6 +209,9 @@ export async function createAppointment(formData: FormData): Promise<BookingResu
 
   if (error || !data) {
     console.error("createAppointment error:", error?.message);
+    // Backed by partial unique index `appointments_no_double_booking` on active slots.
+    // Any 23505 unique violation here indicates that the slot is taken, since no
+    // payment_reference is written at initial insert (references are set post-checkout).
     if (error && (error as { code?: string }).code === "23505") {
       return {
         ok: false,

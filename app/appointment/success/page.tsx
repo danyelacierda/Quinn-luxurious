@@ -127,9 +127,15 @@ export default async function AppointmentSuccessPage({ searchParams }: PageProps
                 .neq("payment_status", "fully_paid")
                 .select("id");
 
-              if ((updateErr as { code?: string })?.code === "23505") {
+              const errObj = updateErr as { code?: string; message?: string; details?: string };
+              const errText = `${errObj?.message || ""} ${errObj?.details || ""}`;
+              const isSlotConflict =
+                errObj?.code === "23505" &&
+                errText.includes("appointments_no_double_booking");
+
+              if (isSlotConflict) {
                 console.error(
-                  `[successPage] slot conflict (23505), flagging for refund, appointment_id: ${appointmentId}`
+                  `[successPage] slot conflict (23505: appointments_no_double_booking), flagging for refund, appointment_id: ${appointmentId}`
                 );
                 slotConflict = true;
                 const { error: refundErr } = await supabaseAdmin
@@ -147,6 +153,10 @@ export default async function AppointmentSuccessPage({ searchParams }: PageProps
                     `[successPage] table: appointments, operation: update (needs_refund), appointment_id: ${appointmentId}, error: ${refundErr.message}`
                   );
                 }
+              } else if (updateErr) {
+                console.error(
+                  `[successPage] database update failed, appointment_id: ${appointmentId}: ${updateErr.message}`
+                );
               } else if (updatedRows && updatedRows.length > 0) {
                 isVerifiedPaid = true;
               } else if (appt.payment_status === "fully_paid") {

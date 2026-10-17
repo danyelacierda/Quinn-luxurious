@@ -158,9 +158,15 @@ export async function POST(req: Request) {
           .select("id");
 
         if (updateErr) {
-          if ((updateErr as { code?: string }).code === "23505") {
+          const errObj = updateErr as { code?: string; message?: string; details?: string };
+          const errText = `${errObj?.message || ""} ${errObj?.details || ""}`;
+          const isSlotConflict =
+            errObj?.code === "23505" &&
+            errText.includes("appointments_no_double_booking");
+
+          if (isSlotConflict) {
             console.error(
-              `[stripeWebhook:checkout.session.completed] slot conflict (23505), flagging for refund, appointment_id: ${appointmentId}`
+              `[stripeWebhook:checkout.session.completed] slot conflict (23505: appointments_no_double_booking), flagging for refund, appointment_id: ${appointmentId}`
             );
             const { error: refundFlagErr } = await supabaseAdmin
               .from("appointments")
@@ -184,7 +190,9 @@ export async function POST(req: Request) {
             });
           }
 
-          console.error("Database update failed on webhook:", updateErr.message);
+          console.error(
+            `[stripeWebhook:checkout.session.completed] database update failed, appointment_id: ${appointmentId}: ${updateErr.message}`
+          );
           // Return 500 so Stripe automatically retries the delivery
           return NextResponse.json(
             { error: "Database update failed." },
