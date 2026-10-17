@@ -203,7 +203,7 @@ export async function POST(req: Request) {
         if (appointmentId) {
           // Free slot only if the appointment is still pending_payment and matches session.id.
           // Never cancel if it was already confirmed or paid.
-          await supabaseAdmin
+          const { error: expireErr } = await supabaseAdmin
             .from("appointments")
             .update({
               status: "cancelled",
@@ -213,15 +213,23 @@ export async function POST(req: Request) {
             .eq("stripe_session_id", session.id)
             .eq("status", "pending_payment")
             .neq("payment_status", "fully_paid");
+
+          if (expireErr) {
+            console.error(
+              `[stripeWebhook:checkout.session.expired] table: appointments, operation: update, appointment_id: ${appointmentId}, error: ${expireErr.message}`
+            );
+          }
         }
         break;
       }
 
       case "payment_intent.payment_failed": {
         const paymentIntent = event.data.object as Stripe.PaymentIntent;
+        const appointmentId =
+          paymentIntent.metadata?.appointment_id || paymentIntent.id;
 
         // Never overwrite a confirmed or fully paid booking with failed status.
-        await supabaseAdmin
+        const { error: failErr } = await supabaseAdmin
           .from("appointments")
           .update({
             payment_status: "failed",
@@ -229,6 +237,12 @@ export async function POST(req: Request) {
           .eq("stripe_payment_intent_id", paymentIntent.id)
           .neq("status", "confirmed")
           .neq("payment_status", "fully_paid");
+
+        if (failErr) {
+          console.error(
+            `[stripeWebhook:payment_intent.payment_failed] table: appointments, operation: update, appointment_id: ${appointmentId}, error: ${failErr.message}`
+          );
+        }
         break;
       }
 

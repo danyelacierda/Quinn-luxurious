@@ -6,6 +6,7 @@ export type DeductResult = {
   error: string | null;
   message?: string;
   deducted?: boolean;
+  blocking?: boolean;
 };
 
 /**
@@ -77,13 +78,30 @@ export async function deductInventoryForCompletedAppointment(
     .select("inventory_item_id, quantity, inventory_items(id, name, current_stock, unit, is_active)")
     .eq("service_id", appt.service_id);
 
-  if (recipeErr || !recipes || recipes.length === 0) {
-    // No products configured for this service: record deduction marker and exit cleanly
-    await supabaseAdmin.from("appointment_inventory_deductions").insert({
+  // 3a. Separate query error: log and return error without marking deduction
+  if (recipeErr) {
+    console.error(
+      `[deductInventoryForCompletedAppointment] table: service_inventory_recipes, operation: select, appointment_id: ${appointmentId}, error: ${recipeErr.message}`
+    );
+    return {
+      error: `Failed to query service inventory recipes: ${recipeErr.message}`,
+      deducted: false,
+      blocking: false,
+    };
+  }
+
+  // 3b. Zero recipes configured for service: query succeeded, record deduction marker and exit cleanly
+  if (!recipes || recipes.length === 0) {
+    const { error: guardErr } = await supabaseAdmin.from("appointment_inventory_deductions").insert({
       appointment_id: appointmentId,
       service_id: appt.service_id,
       staff_id: appt.staff_id,
     });
+    if (guardErr) {
+      console.error(
+        `[deductInventoryForCompletedAppointment] table: appointment_inventory_deductions, operation: insert, appointment_id: ${appointmentId}, error: ${guardErr.message}`
+      );
+    }
     return { error: null, message: "No inventory items consumed for this service.", deducted: true };
   }
 
@@ -98,6 +116,7 @@ export async function deductInventoryForCompletedAppointment(
     if (available < required) {
       return {
         error: "Insufficient stock for " + item.name + ". Required: " + required + " " + item.unit + ", Available: " + available + " " + item.unit + ". Please restock before completing this appointment.",
+        blocking: true,
       };
     }
   }
@@ -111,12 +130,18 @@ export async function deductInventoryForCompletedAppointment(
     const quantity = Number(r.quantity);
     const newStock = Number((currentStock - quantity).toFixed(2));
 
-    await supabaseAdmin
+    const { error: stockUpdateErr } = await supabaseAdmin
       .from("inventory_items")
       .update({ current_stock: newStock, updated_at: new Date().toISOString() })
       .eq("id", item.id);
 
-    await supabaseAdmin.from("inventory_movements").insert({
+    if (stockUpdateErr) {
+      console.error(
+        `[deductInventoryForCompletedAppointment] table: inventory_items, operation: update, appointment_id: ${appointmentId}, error: ${stockUpdateErr.message}`
+      );
+    }
+
+    const { error: movementErr } = await supabaseAdmin.from("inventory_movements").insert({
       inventory_item_id: item.id,
       change_quantity: -quantity,
       previous_stock: currentStock,
@@ -128,14 +153,26 @@ export async function deductInventoryForCompletedAppointment(
       staff_id: appt.staff_id,
       created_by_user_id: callerUserId || null,
     });
+
+    if (movementErr) {
+      console.error(
+        `[deductInventoryForCompletedAppointment] table: inventory_movements, operation: insert, appointment_id: ${appointmentId}, error: ${movementErr.message}`
+      );
+    }
   }
 
   // 6. Record deduction marker
-  await supabaseAdmin.from("appointment_inventory_deductions").insert({
+  const { error: finalGuardErr } = await supabaseAdmin.from("appointment_inventory_deductions").insert({
     appointment_id: appointmentId,
     service_id: appt.service_id,
     staff_id: appt.staff_id,
   });
+
+  if (finalGuardErr) {
+    console.error(
+      `[deductInventoryForCompletedAppointment] table: appointment_inventory_deductions, operation: insert, appointment_id: ${appointmentId}, error: ${finalGuardErr.message}`
+    );
+  }
 
   revalidatePath("/admin");
   revalidatePath("/staff");

@@ -41,7 +41,7 @@ export async function updateAppointmentStatus(
   if (status === "completed") {
     const { deductInventoryForCompletedAppointment } = await import("@/lib/inventory/deduct");
     const deductionRes = await deductInventoryForCompletedAppointment(appointmentId, userId || undefined);
-    if (deductionRes.error) {
+    if (deductionRes.error && deductionRes.blocking !== false) {
       return { error: deductionRes.error };
     }
   }
@@ -228,7 +228,7 @@ export async function markAppointmentCompletedByStaff(
   //      and confirming appt.staff_id === staffRecord.id (or caller is admin resolved via getCurrentUserRole()).
   const { deductInventoryForCompletedAppointment } = await import("@/lib/inventory/deduct");
   const deductionRes = await deductInventoryForCompletedAppointment(appointmentId, userId || undefined);
-  if (deductionRes.error) {
+  if (deductionRes.error && deductionRes.blocking !== false) {
     return { error: deductionRes.error };
   }
 
