@@ -10,7 +10,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "node --test \"tests/*.test.mjs\""
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test \"tests/*.test.mjs\""
   },
   "dependencies": {
     "@clerk/nextjs": "^7.9.12",
@@ -29,7 +29,6 @@
     "nodemailer": "^10.0.16",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "resend": "^6.32.1",
     "server-only": "^0.0.1",
     "stripe": "^23.0.0",
     "svix": "^2.7.0",
