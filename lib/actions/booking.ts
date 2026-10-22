@@ -1,6 +1,7 @@
 "use server";
 
 import { auth } from "@clerk/nextjs/server";
+import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { getAvailableSlots } from "@/lib/supabase/queries";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -178,6 +179,32 @@ export async function createAppointment(formData: FormData): Promise<BookingResu
 
     if (userRecord) {
       validCustomerId = userId;
+    } else {
+      // Auto-sync user to Supabase if not yet synced by Clerk webhook
+      try {
+        const { currentUser } = await import("@clerk/nextjs/server");
+        const clerkUser = await currentUser();
+        if (clerkUser) {
+          const userEmail = clerkUser.emailAddresses[0]?.emailAddress ?? email;
+          const { error: syncError } = await supabaseAdmin
+            .from("users")
+            .upsert(
+              {
+                id: userId,
+                email: userEmail,
+                full_name: `${clerkUser.firstName ?? ""} ${clerkUser.lastName ?? ""}`.trim() || fullName,
+                phone: phone || null,
+              },
+              { onConflict: "id" }
+            );
+          if (!syncError) {
+            validCustomerId = userId;
+          }
+        }
+      } catch (syncErr) {
+        console.warn("Could not auto-sync user record during booking:", syncErr);
+        validCustomerId = userId;
+      }
     }
   }
 
@@ -226,7 +253,18 @@ export async function createAppointment(formData: FormData): Promise<BookingResu
   if (paymentMethod === "stripe") {
     try {
       const stripe = getStripeClient();
-      const baseUrl = getAppBaseUrl();
+      let requestOrigin: string | null = null;
+      try {
+        const headerList = await headers();
+        const host = headerList.get("x-forwarded-host") || headerList.get("host");
+        const proto = headerList.get("x-forwarded-proto") || "https";
+        if (host) {
+          requestOrigin = `${proto}://${host}`;
+        }
+      } catch {
+        // Fallback to env-based URL
+      }
+      const baseUrl = getAppBaseUrl(requestOrigin);
 
       const session = await stripe.checkout.sessions.create({
         mode: "payment",

@@ -23,7 +23,9 @@ const jost = Jost({
 export const metadata: Metadata = {
   title: `${siteConfig.name} | Boutique Lash & Nail Studio`,
   description: siteConfig.description,
-  metadataBase: new URL("https://quinnluxurious.com"),
+  metadataBase: new URL(
+    process.env.NEXT_PUBLIC_APP_URL || "https://danyelacierda-quinn-luxurious.vercel.app"
+  ),
   openGraph: {
     title: `${siteConfig.name} | Boutique Lash & Nail Studio`,
     description: siteConfig.description,

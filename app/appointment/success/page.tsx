@@ -7,7 +7,9 @@ import { auth } from "@clerk/nextjs/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getStripeClient } from "@/lib/stripe";
 import { formatPHP } from "@/lib/format";
-import { isAuthorizedToManageAppointment, resolveUserRole } from "@/lib/authPolicy";
+import { getCurrentUserRole } from "@/lib/auth";
+import { isAuthorizedToViewSuccessPage } from "@/lib/authPolicy";
+import { markPaidAndNotify } from "@/lib/payments/markPaidAndNotify";
 import type { AppointmentRow, ServiceRow } from "@/lib/supabase/queries";
 
 type PageProps = {
@@ -23,7 +25,22 @@ export default async function AppointmentSuccessPage({ searchParams }: PageProps
   const sessionId = resolvedParams?.session_id;
 
   const { userId } = await auth();
+  const callerRole = await getCurrentUserRole();
   const supabaseAdmin = createAdminClient();
+
+  // If user is authenticated, resolve role checking both Clerk claims and Supabase users table
+  let effectiveRole = callerRole;
+  if (userId && effectiveRole !== "admin" && effectiveRole !== "staff") {
+    const { data: userRec } = await supabaseAdmin
+      .from("users")
+      .select("role")
+      .eq("id", userId)
+      .maybeSingle();
+
+    if (userRec?.role === "admin" || userRec?.role === "staff") {
+      effectiveRole = userRec.role;
+    }
+  }
 
   let appointment: AppointmentRow | null = null;
   let service: ServiceRow | null = null;
@@ -39,65 +56,40 @@ export default async function AppointmentSuccessPage({ searchParams }: PageProps
       .maybeSingle();
 
     if (appt) {
-      // 1. Customer authorization check:
-      // If the appointment is linked to a customer, enforce that the viewer is the owner or staff/admin
-      if (appt.customer_id) {
-        let isAuthorized = false;
-        if (userId) {
-          if (appt.customer_id === userId) {
-            isAuthorized = true;
-          } else {
-            // Check if admin or staff
-            const { data: userRec } = await supabaseAdmin
-              .from("users")
-              .select("role, email")
-              .eq("id", userId)
-              .maybeSingle();
-
-            if (userRec?.role === "admin" || userRec?.role === "staff") {
-              isAuthorized = true;
-            }
-          }
-        }
-
-        if (!isAuthorized) {
-          unauthorizedAccess = true;
-        }
+      if (appt.service_id) {
+        const { data: srv } = await supabaseAdmin
+          .from("services")
+          .select("*")
+          .eq("id", appt.service_id)
+          .maybeSingle();
+        service = srv;
       }
 
-      if (!unauthorizedAccess) {
-        appointment = appt;
-        if (appt.service_id) {
-          const { data: srv } = await supabaseAdmin
-            .from("services")
-            .select("*")
-            .eq("id", appt.service_id)
-            .maybeSingle();
-          service = srv;
-        }
+      isVerifiedPaid = appt.payment_status === "fully_paid";
+      slotConflict = Boolean(appt.needs_refund);
 
-        isVerifiedPaid = appt.payment_status === "fully_paid";
-        slotConflict = Boolean(appt.needs_refund);
+      let verifiedStripeSessionMatches = false;
 
-        // 2. Safe server-to-server fallback check:
-        // NEVER trust redirect params alone. Verify all session attributes rigorously before updating.
-        if (
-          !isVerifiedPaid &&
-          sessionId &&
-          sessionId.startsWith("cs_test_") &&
-          service
-        ) {
+      // Safe Stripe Session Verification:
+      // Holds true if the session is cryptographically matched to this appointment and verified paid
+      if (sessionId && sessionId.startsWith("cs_")) {
+        // Fast-path: Appointment already marked fully_paid by webhook and session ID matches stored session
+        if (appt.stripe_session_id === sessionId && isVerifiedPaid) {
+          verifiedStripeSessionMatches = true;
+        } else {
+          // Server-to-server fallback check with Stripe API:
+          // Strictly verify all attributes: appointment reference, amount, currency, and paid status
           try {
             const stripe = getStripeClient();
             const session = await stripe.checkout.sessions.retrieve(sessionId);
 
-            const expectedAmountCentavos = Math.round(service.price * 100);
+            const expectedAmountCentavos = service ? Math.round(service.price * 100) : 0;
             const sessionMatchesAppt =
               (session.metadata?.appointment_id === appt.id ||
                 session.client_reference_id === appt.id) &&
               (!appt.stripe_session_id || appt.stripe_session_id === session.id);
 
-            const amountMatches = session.amount_total === expectedAmountCentavos;
+            const amountMatches = service ? session.amount_total === expectedAmountCentavos : true;
             const currencyMatches = session.currency?.toLowerCase() === "php";
             const isPaidPaymentMode =
               session.mode === "payment" && session.payment_status === "paid";
@@ -108,70 +100,66 @@ export default async function AppointmentSuccessPage({ searchParams }: PageProps
               currencyMatches &&
               isPaidPaymentMode
             ) {
-              // Atomic update with status guard
-              const { data: updatedRows, error: updateErr } = await supabaseAdmin
-                .from("appointments")
-                .update({
-                  status: "confirmed",
-                  payment_status: "fully_paid",
-                  payment_method: "stripe",
-                  payment_reference: session.payment_intent
-                    ? String(session.payment_intent)
-                    : session.id,
-                  stripe_session_id: session.id,
-                  stripe_payment_intent_id: session.payment_intent
-                    ? String(session.payment_intent)
-                    : null,
-                })
-                .eq("id", appointmentId)
-                .neq("payment_status", "fully_paid")
-                .select("id");
+              verifiedStripeSessionMatches = true;
 
-              const errObj = updateErr as { code?: string; message?: string; details?: string };
-              const errText = `${errObj?.message || ""} ${errObj?.details || ""}`;
-              const isSlotConflict =
-                errObj?.code === "23505" &&
-                errText.includes("appointments_no_double_booking");
+              if (!isVerifiedPaid && service) {
+                // Atomic guarded update & notification via shared helper
+                const result = await markPaidAndNotify({
+                  appointmentId: appt.id,
+                  sessionId: session.id,
+                  paymentIntentId: session.payment_intent ? String(session.payment_intent) : null,
+                  customerEmail: appt.email,
+                  customerName: appt.full_name,
+                  serviceName: service.name,
+                  date: appt.appointment_date,
+                  time: appt.appointment_time,
+                  phone: appt.phone,
+                  price: service.price,
+                  supabase: supabaseAdmin,
+                  runEmailWithAfter: true,
+                });
 
-              if (isSlotConflict) {
-                console.error(
-                  `[successPage] slot conflict (23505: appointments_no_double_booking), flagging for refund, appointment_id: ${appointmentId}`
-                );
-                slotConflict = true;
-                const { error: refundErr } = await supabaseAdmin
-                  .from("appointments")
-                  .update({
-                    needs_refund: true,
-                    payment_reference: session.payment_intent
-                      ? String(session.payment_intent)
-                      : session.id,
-                  })
-                  .eq("id", appointmentId);
-
-                if (refundErr) {
-                  console.error(
-                    `[successPage] table: appointments, operation: update (needs_refund), appointment_id: ${appointmentId}, error: ${refundErr.message}`
-                  );
+                if (result.slotConflict) {
+                  slotConflict = true;
+                } else if (result.updated || result.alreadyPaid || appt.payment_status === "fully_paid") {
+                  isVerifiedPaid = true;
                 }
-              } else if (updateErr) {
-                console.error(
-                  `[successPage] database update failed, appointment_id: ${appointmentId}: ${updateErr.message}`
-                );
-              } else if (updatedRows && updatedRows.length > 0) {
-                isVerifiedPaid = true;
-              } else if (appt.payment_status === "fully_paid") {
-                isVerifiedPaid = true;
               }
             } else {
               console.warn(
-                "Stripe session validation failed on success page fallback:",
+                "[AppointmentSuccess] Stripe session validation failed:",
                 { sessionMatchesAppt, amountMatches, currencyMatches, isPaidPaymentMode }
               );
             }
-          } catch (syncErr) {
-            console.error("Error retrieving Stripe session for success page:", syncErr);
+          } catch (syncErr: any) {
+            console.error("[AppointmentSuccess] Error retrieving Stripe session:", syncErr?.message);
           }
         }
+      }
+
+      // Check authorization via pure policy function
+      const authResult = isAuthorizedToViewSuccessPage({
+        caller: { userId: userId ?? null, role: effectiveRole },
+        appointment: { id: appt.id, customer_id: appt.customer_id },
+        verifiedStripeSessionMatches,
+      });
+
+      // Safe server-side diagnostic logging (no secrets, tokens, or PII)
+      console.info("[AppointmentSuccessAuth]", {
+        appointmentId: appt.id,
+        authOutcome: authResult.isAuthorized ? "authorized" : "denied",
+        authReason: authResult.reason,
+        hasUserId: Boolean(userId),
+        userRole: effectiveRole ?? "unauthenticated",
+        hasAppointmentCustomerId: Boolean(appt.customer_id),
+        hasSessionId: Boolean(sessionId),
+        isVerifiedPaid,
+      });
+
+      if (!authResult.isAuthorized) {
+        unauthorizedAccess = true;
+      } else {
+        appointment = appt;
       }
     }
   }

@@ -1,4 +1,4 @@
-﻿import test from "node:test";
+import test from "node:test";
 import assert from "node:assert/strict";
 
 // Import real application validation & authorization policy functions directly
@@ -7,6 +7,7 @@ import {
   isAuthorizedToManageAppointment,
   resolveUserRole,
   isConfiguredAdminEmail,
+  isAuthorizedToViewSuccessPage,
 } from "../lib/authPolicy.ts";
 
 test("Email Validation Suite (Real Application Function: isValidEmail)", async (t) => {
@@ -180,5 +181,158 @@ test("Role Resolution & Untrusted Metadata Protection Suite (Real Application Fu
       adminEmailsEnv: adminEnv,
     });
     assert.equal(role, "customer");
+  });
+});
+
+test("Success Page Authorization & Strict Ownership Suite (Real Application Function: isAuthorizedToViewSuccessPage)", async (t) => {
+  const privateAppointment = {
+    id: "appt_owner_123",
+    customer_id: "user_owner_456",
+  };
+
+  const guestAppointment = {
+    id: "appt_guest_789",
+    customer_id: null,
+  };
+
+  await t.test("allows appointment owner when signed in (without session ID)", () => {
+    const res = isAuthorizedToViewSuccessPage({
+      caller: { userId: "user_owner_456", role: "customer" },
+      appointment: privateAppointment,
+      verifiedStripeSessionMatches: false,
+    });
+    assert.equal(res.isAuthorized, true);
+    assert.equal(res.reason, "owner");
+  });
+
+  await t.test("allows customer returning from Stripe with verified session ID even if signed-out", () => {
+    const res = isAuthorizedToViewSuccessPage({
+      caller: { userId: null, role: null },
+      appointment: privateAppointment,
+      verifiedStripeSessionMatches: true,
+    });
+    assert.equal(res.isAuthorized, true);
+    assert.equal(res.reason, "verified_stripe_session");
+  });
+
+  await t.test("allows customer returning from Stripe with verified session ID when signed-in", () => {
+    const res = isAuthorizedToViewSuccessPage({
+      caller: { userId: "user_owner_456", role: "customer" },
+      appointment: privateAppointment,
+      verifiedStripeSessionMatches: true,
+    });
+    assert.equal(res.isAuthorized, true);
+  });
+
+  await t.test("BLOCKS signed-out user merely knowing the appointment ID (no session ID)", () => {
+    const res = isAuthorizedToViewSuccessPage({
+      caller: { userId: null, role: null },
+      appointment: privateAppointment,
+      verifiedStripeSessionMatches: false,
+    });
+    assert.equal(res.isAuthorized, false);
+    assert.equal(res.reason, "unauthorized");
+  });
+
+  await t.test("BLOCKS signed-out user with invalid / unverified session ID", () => {
+    const res = isAuthorizedToViewSuccessPage({
+      caller: { userId: null, role: null },
+      appointment: privateAppointment,
+      verifiedStripeSessionMatches: false,
+    });
+    assert.equal(res.isAuthorized, false);
+    assert.equal(res.reason, "unauthorized");
+  });
+
+  await t.test("BLOCKS unrelated signed-in customer attempting to view another's appointment without verified session", () => {
+    const res = isAuthorizedToViewSuccessPage({
+      caller: { userId: "user_attacker_999", role: "customer" },
+      appointment: privateAppointment,
+      verifiedStripeSessionMatches: false,
+    });
+    assert.equal(res.isAuthorized, false);
+    assert.equal(res.reason, "unauthorized");
+  });
+
+  await t.test("allows authorized staff member to view reservation", () => {
+    const res = isAuthorizedToViewSuccessPage({
+      caller: { userId: "user_staff_001", role: "staff" },
+      appointment: privateAppointment,
+      verifiedStripeSessionMatches: false,
+    });
+    assert.equal(res.isAuthorized, true);
+    assert.equal(res.reason, "staff_admin");
+  });
+
+  await t.test("allows authorized admin to view reservation", () => {
+    const res = isAuthorizedToViewSuccessPage({
+      caller: { userId: "user_admin_001", role: "admin" },
+      appointment: privateAppointment,
+      verifiedStripeSessionMatches: false,
+    });
+    assert.equal(res.isAuthorized, true);
+    assert.equal(res.reason, "staff_admin");
+  });
+
+  await t.test("BLOCKS signed-out stranger from viewing guest reservation merely by guessing appointment ID", () => {
+    const res = isAuthorizedToViewSuccessPage({
+      caller: { userId: null, role: null },
+      appointment: guestAppointment,
+      verifiedStripeSessionMatches: false,
+    });
+    assert.equal(res.isAuthorized, false);
+    assert.equal(res.reason, "unauthorized");
+  });
+
+  await t.test("allows guest customer returning from Stripe with verified session ID", () => {
+    const res = isAuthorizedToViewSuccessPage({
+      caller: { userId: null, role: null },
+      appointment: guestAppointment,
+      verifiedStripeSessionMatches: true,
+    });
+    assert.equal(res.isAuthorized, true);
+    assert.equal(res.reason, "verified_stripe_session");
+  });
+
+  await t.test("BLOCKS signed-out user with unpaid Stripe session (payment_status !== paid)", () => {
+    // When session retrieval determines payment_status is 'unpaid', verifiedStripeSessionMatches is false
+    const res = isAuthorizedToViewSuccessPage({
+      caller: { userId: null, role: null },
+      appointment: privateAppointment,
+      verifiedStripeSessionMatches: false,
+    });
+    assert.equal(res.isAuthorized, false);
+    assert.equal(res.reason, "unauthorized");
+  });
+
+  await t.test("BLOCKS signed-out user when Stripe session belongs to another appointment (mismatched metadata)", () => {
+    // When session.metadata.appointment_id does not match appt.id, verifiedStripeSessionMatches is false
+    const res = isAuthorizedToViewSuccessPage({
+      caller: { userId: null, role: null },
+      appointment: privateAppointment,
+      verifiedStripeSessionMatches: false,
+    });
+    assert.equal(res.isAuthorized, false);
+    assert.equal(res.reason, "unauthorized");
+  });
+
+  await t.test("BLOCKS signed-in Customer A attempting to access Customer B appointment with an unpaid or mismatched session", () => {
+    const res = isAuthorizedToViewSuccessPage({
+      caller: { userId: "user_customer_A", role: "customer" },
+      appointment: { id: "appt_B_private", customer_id: "user_customer_B" },
+      verifiedStripeSessionMatches: false,
+    });
+    assert.equal(res.isAuthorized, false);
+    assert.equal(res.reason, "unauthorized");
+  });
+
+  await t.test("BLOCKS visitor when appointment is missing or null", () => {
+    const res = isAuthorizedToViewSuccessPage({
+      caller: { userId: null, role: null },
+      appointment: { id: "", customer_id: null },
+      verifiedStripeSessionMatches: false,
+    });
+    assert.equal(res.isAuthorized, false);
+    assert.equal(res.reason, "unauthorized");
   });
 });

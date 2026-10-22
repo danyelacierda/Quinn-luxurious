@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type Stripe from "stripe";
 import { constructWebhookEvent } from "@/lib/stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { markPaidAndNotify } from "@/lib/payments/markPaidAndNotify";
 
 export const runtime = "nodejs";
 
@@ -79,7 +80,7 @@ export async function POST(req: Request) {
         // 2. Fetch existing appointment to verify stored session and service
         const { data: existingAppt, error: fetchErr } = await supabaseAdmin
           .from("appointments")
-          .select("id, status, payment_status, full_name, email, appointment_date, appointment_time, service_id, stripe_session_id")
+          .select("id, status, payment_status, full_name, email, phone, appointment_date, appointment_time, service_id, stripe_session_id")
           .eq("id", appointmentId)
           .maybeSingle();
 
@@ -136,62 +137,38 @@ export async function POST(req: Request) {
           );
         }
 
-        // 5. Atomic concurrency guard:
-        // Update ONLY if payment_status is not already 'fully_paid'.
-        // If two webhook requests arrive simultaneously, only ONE will update the row.
+        // 5. Atomic guarded update & notification via shared helper
         const paymentIntentId = session.payment_intent
           ? String(session.payment_intent)
           : null;
 
-        const { data: updatedRows, error: updateErr } = await supabaseAdmin
-          .from("appointments")
-          .update({
-            status: "confirmed",
-            payment_status: "fully_paid",
-            payment_method: "stripe",
-            payment_reference: paymentIntentId || session.id,
-            stripe_session_id: session.id,
-            stripe_payment_intent_id: paymentIntentId,
-          })
-          .eq("id", appointmentId)
-          .neq("payment_status", "fully_paid")
-          .select("id");
+        const result = await markPaidAndNotify({
+          appointmentId,
+          sessionId: session.id,
+          paymentIntentId,
+          customerEmail: existingAppt.email,
+          customerName: existingAppt.full_name,
+          serviceName: srv.name || "Signature Service",
+          date: existingAppt.appointment_date,
+          time: existingAppt.appointment_time,
+          phone: existingAppt.phone,
+          price: srv.price,
+          supabase: supabaseAdmin,
+          runEmailWithAfter: false,
+        });
 
-        if (updateErr) {
-          const errObj = updateErr as { code?: string; message?: string; details?: string };
-          const errText = `${errObj?.message || ""} ${errObj?.details || ""}`;
-          const isSlotConflict =
-            errObj?.code === "23505" &&
-            errText.includes("appointments_no_double_booking");
+        if (result.slotConflict) {
+          return NextResponse.json({
+            received: true,
+            slotConflict: true,
+            needs_refund: true,
+            message: "Time slot conflict on paid booking: flagged for refund.",
+          });
+        }
 
-          if (isSlotConflict) {
-            console.error(
-              `[stripeWebhook:checkout.session.completed] slot conflict (23505: appointments_no_double_booking), flagging for refund, appointment_id: ${appointmentId}`
-            );
-            const { error: refundFlagErr } = await supabaseAdmin
-              .from("appointments")
-              .update({
-                needs_refund: true,
-                payment_reference: paymentIntentId || session.id,
-              })
-              .eq("id", appointmentId);
-
-            if (refundFlagErr) {
-              console.error(
-                `[stripeWebhook:checkout.session.completed] table: appointments, operation: update (needs_refund), appointment_id: ${appointmentId}, error: ${refundFlagErr.message}`
-              );
-            }
-
-            return NextResponse.json({
-              received: true,
-              slotConflict: true,
-              needs_refund: true,
-              message: "Time slot conflict on paid booking: flagged for refund.",
-            });
-          }
-
+        if (result.error) {
           console.error(
-            `[stripeWebhook:checkout.session.completed] database update failed, appointment_id: ${appointmentId}: ${updateErr.message}`
+            `[stripeWebhook:checkout.session.completed] database update failed, appointment_id: ${appointmentId}: ${result.error.message || result.error}`
           );
           // Return 500 so Stripe automatically retries the delivery
           return NextResponse.json(
@@ -200,30 +177,12 @@ export async function POST(req: Request) {
           );
         }
 
-        // If 0 rows updated, it was already marked fully_paid concurrently
-        if (!updatedRows || updatedRows.length === 0) {
+        if (result.alreadyPaid) {
           return NextResponse.json({
             received: true,
             idempotent: true,
             message: "Appointment was already confirmed and paid.",
           });
-        }
-
-        // 6. Send confirmation email only on the first atomic update
-        try {
-          const { sendBookingConfirmationEmail } = await import("@/lib/email");
-          await sendBookingConfirmationEmail({
-            customerEmail: existingAppt.email,
-            customerName: existingAppt.full_name,
-            serviceName: srv.name || "Signature Service",
-            date: existingAppt.appointment_date,
-            time: existingAppt.appointment_time,
-            price: srv.price,
-            paymentMethod: "stripe",
-            paymentReference: paymentIntentId || session.id,
-          });
-        } catch (emailErr) {
-          console.error("Failed to send Stripe booking confirmation email:", emailErr);
         }
 
         break;

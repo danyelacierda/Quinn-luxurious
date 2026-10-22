@@ -1,4 +1,4 @@
-﻿export type AppUserRole = "admin" | "staff" | "customer";
+export type AppUserRole = "admin" | "staff" | "customer";
 
 /**
  * Normalizes email address for reliable case-insensitive comparisons.
@@ -86,4 +86,54 @@ export function isAuthorizedToManageAppointment(
   }
 
   return false;
+}
+
+export interface SuccessPageAuthParams {
+  caller: {
+    userId: string | null;
+    role: AppUserRole | null;
+  };
+  appointment: {
+    id: string;
+    customer_id: string | null;
+  };
+  verifiedStripeSessionMatches?: boolean;
+}
+
+export interface SuccessPageAuthResult {
+  isAuthorized: boolean;
+  reason: "owner" | "staff_admin" | "verified_stripe_session" | "unauthorized";
+}
+
+/**
+ * Pure authorization policy function for viewing appointment success / confirmation:
+ * Enforces strict reservation ownership while safely allowing:
+ * 1. The appointment owner when signed in.
+ * 2. Authorized staff and admin members.
+ * 3. The customer who holds a verified, paid Stripe session matching this appointment.
+ *
+ * Never allows access merely because someone knows an appointment ID.
+ */
+export function isAuthorizedToViewSuccessPage({
+  caller,
+  appointment,
+  verifiedStripeSessionMatches = false,
+}: SuccessPageAuthParams): SuccessPageAuthResult {
+  // 1. Staff and Admins can view any reservation
+  if (caller.userId && (caller.role === "admin" || caller.role === "staff")) {
+    return { isAuthorized: true, reason: "staff_admin" };
+  }
+
+  // 2. Verified Stripe checkout session payer (holds cryptographic session token matching this reservation)
+  if (verifiedStripeSessionMatches) {
+    return { isAuthorized: true, reason: "verified_stripe_session" };
+  }
+
+  // 3. Appointment owner when signed in
+  if (caller.userId && appointment.customer_id && caller.userId === appointment.customer_id) {
+    return { isAuthorized: true, reason: "owner" };
+  }
+
+  // 4. Default deny: anonymous or unrelated visitors with just an appointment ID are blocked
+  return { isAuthorized: false, reason: "unauthorized" };
 }

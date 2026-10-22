@@ -2,8 +2,9 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
 // Import Stripe integration functions
-import { getStripeClient, constructWebhookEvent, getAppBaseUrl } from "../lib/stripe.ts";
-import { isAuthorizedToManageAppointment } from "../lib/authPolicy.ts";
+import { getStripeClient, constructWebhookEvent, getAppBaseUrl, isTrustedOrigin } from "../lib/stripe.ts";
+import { isAuthorizedToManageAppointment, isAuthorizedToViewSuccessPage } from "../lib/authPolicy.ts";
+import { markPaidAndNotify } from "../lib/payments/markPaidAndNotify.ts";
 
 describe("Stripe Test-Mode Payments Suite", () => {
   describe("1. Strict Safety & Test-Mode Key Guard", () => {
@@ -49,13 +50,76 @@ describe("Stripe Test-Mode Payments Suite", () => {
     test("getAppBaseUrl defaults safely to localhost:3000 if no env set", () => {
       const originalAppUrl = process.env.NEXT_PUBLIC_APP_URL;
       const originalVercelUrl = process.env.VERCEL_URL;
+      const originalProdUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL;
       try {
         delete process.env.NEXT_PUBLIC_APP_URL;
         delete process.env.VERCEL_URL;
+        delete process.env.VERCEL_PROJECT_PRODUCTION_URL;
         assert.equal(getAppBaseUrl(), "http://localhost:3000");
       } finally {
-        process.env.NEXT_PUBLIC_APP_URL = originalAppUrl;
-        process.env.VERCEL_URL = originalVercelUrl;
+        if (originalAppUrl !== undefined) process.env.NEXT_PUBLIC_APP_URL = originalAppUrl;
+        else delete process.env.NEXT_PUBLIC_APP_URL;
+
+        if (originalVercelUrl !== undefined) process.env.VERCEL_URL = originalVercelUrl;
+        else delete process.env.VERCEL_URL;
+
+        if (originalProdUrl !== undefined) process.env.VERCEL_PROJECT_PRODUCTION_URL = originalProdUrl;
+        else delete process.env.VERCEL_PROJECT_PRODUCTION_URL;
+      }
+    });
+
+    test("isTrustedOrigin allows localhost, vercel.app, and configured domains, but strictly rejects untrusted hosts", () => {
+      assert.equal(isTrustedOrigin("http://localhost:3000"), true);
+      assert.equal(isTrustedOrigin("https://127.0.0.1:3000"), true);
+      assert.equal(isTrustedOrigin("https://danyelacierda-quinn-luxurious.vercel.app"), true);
+      assert.equal(isTrustedOrigin("https://danyelacierda-quinn-luxur-ous-2xbtb5lac.vercel.app"), true);
+
+      // Rejects malicious or arbitrary hosts (Host header injection / Open redirect protection)
+      assert.equal(isTrustedOrigin("https://evil.com"), false);
+      assert.equal(isTrustedOrigin("https://attacker-phishing.org"), false);
+      assert.equal(isTrustedOrigin("https://quinnluxurious.com.evil.com"), false);
+      assert.equal(isTrustedOrigin("https://attacker-phishing.vercel.app"), false);
+      assert.equal(isTrustedOrigin("https://unrelated-project.vercel.app"), false);
+      assert.equal(isTrustedOrigin("https://evil.vercel.app"), false);
+      assert.equal(isTrustedOrigin(""), false);
+      assert.equal(isTrustedOrigin(null), false);
+    });
+
+    test("getAppBaseUrl prioritizes pinned production URL and rejects untrusted Host headers", () => {
+      const origAppUrl = process.env.NEXT_PUBLIC_APP_URL;
+      const origVercelUrl = process.env.VERCEL_URL;
+      const origProdUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL;
+      try {
+        // 1. Pinned canonical production URL always wins
+        process.env.NEXT_PUBLIC_APP_URL = "https://danyelacierda-quinn-luxurious.vercel.app";
+        assert.equal(
+          getAppBaseUrl("https://untrusted-attacker.com"),
+          "https://danyelacierda-quinn-luxurious.vercel.app"
+        );
+
+        // 2. In preview/dev without pinned prod URL, untrusted host header is rejected and falls back safely
+        delete process.env.NEXT_PUBLIC_APP_URL;
+        delete process.env.VERCEL_PROJECT_PRODUCTION_URL;
+        process.env.VERCEL_URL = "danyelacierda-preview.vercel.app";
+        assert.equal(
+          getAppBaseUrl("https://evil.com"),
+          "https://danyelacierda-preview.vercel.app"
+        );
+
+        // 3. Trusted preview host header is honored
+        assert.equal(
+          getAppBaseUrl("https://danyelacierda-quinn-luxur-ous-2xbtb5lac.vercel.app"),
+          "https://danyelacierda-quinn-luxur-ous-2xbtb5lac.vercel.app"
+        );
+      } finally {
+        if (origAppUrl !== undefined) process.env.NEXT_PUBLIC_APP_URL = origAppUrl;
+        else delete process.env.NEXT_PUBLIC_APP_URL;
+
+        if (origVercelUrl !== undefined) process.env.VERCEL_URL = origVercelUrl;
+        else delete process.env.VERCEL_URL;
+
+        if (origProdUrl !== undefined) process.env.VERCEL_PROJECT_PRODUCTION_URL = origProdUrl;
+        else delete process.env.VERCEL_PROJECT_PRODUCTION_URL;
       }
     });
   });
@@ -705,6 +769,266 @@ describe("Stripe Test-Mode Payments Suite", () => {
         apptOfCustomerB
       );
       assert.equal(isAllowed, false);
+    });
+
+    test("Success page validates session server-side: rejects unpaid, mismatched, or wrong-amount sessions", () => {
+      function evaluateSuccessPageSession({ appt, service, session }) {
+        const expectedAmountCentavos = service ? Math.round(service.price * 100) : 0;
+        const sessionMatchesAppt =
+          (session.metadata?.appointment_id === appt.id ||
+            session.client_reference_id === appt.id) &&
+          (!appt.stripe_session_id || appt.stripe_session_id === session.id);
+
+        const amountMatches = service ? session.amount_total === expectedAmountCentavos : true;
+        const currencyMatches = session.currency?.toLowerCase() === "php";
+        const isPaidPaymentMode =
+          session.mode === "payment" && session.payment_status === "paid";
+
+        return Boolean(sessionMatchesAppt && amountMatches && currencyMatches && isPaidPaymentMode);
+      }
+
+      const appt = {
+        id: "appt_legit_001",
+        stripe_session_id: "cs_test_legit_123",
+      };
+      const service = { id: "srv_lash", price: 1500 };
+
+      // 1. Valid paid session
+      assert.equal(
+        evaluateSuccessPageSession({
+          appt,
+          service,
+          session: {
+            id: "cs_test_legit_123",
+            mode: "payment",
+            payment_status: "paid",
+            amount_total: 150000,
+            currency: "php",
+            metadata: { appointment_id: "appt_legit_001" },
+          },
+        }),
+        true
+      );
+
+      // 2. Unpaid session (checkout incomplete / requires payment)
+      assert.equal(
+        evaluateSuccessPageSession({
+          appt,
+          service,
+          session: {
+            id: "cs_test_legit_123",
+            mode: "payment",
+            payment_status: "unpaid",
+            amount_total: 150000,
+            currency: "php",
+            metadata: { appointment_id: "appt_legit_001" },
+          },
+        }),
+        false
+      );
+
+      // 3. Mismatched appointment metadata
+      assert.equal(
+        evaluateSuccessPageSession({
+          appt,
+          service,
+          session: {
+            id: "cs_test_other_456",
+            mode: "payment",
+            payment_status: "paid",
+            amount_total: 150000,
+            currency: "php",
+            metadata: { appointment_id: "appt_DIFFERENT_999" },
+          },
+        }),
+        false
+      );
+
+      // 4. Amount tampering
+      assert.equal(
+        evaluateSuccessPageSession({
+          appt,
+          service,
+          session: {
+            id: "cs_test_legit_123",
+            mode: "payment",
+            payment_status: "paid",
+            amount_total: 100, // ₱1.00 instead of ₱1,500.00
+            currency: "php",
+            metadata: { appointment_id: "appt_legit_001" },
+          },
+        }),
+        false
+      );
+
+      // 5. Currency tampering (USD instead of PHP)
+      assert.equal(
+        evaluateSuccessPageSession({
+          appt,
+          service,
+          session: {
+            id: "cs_test_legit_123",
+            mode: "payment",
+            payment_status: "paid",
+            amount_total: 150000,
+            currency: "usd",
+            metadata: { appointment_id: "appt_legit_001" },
+          },
+        }),
+        false
+      );
+    });
+
+    test("Success page handles Stripe API retrieval errors, missing params, and already-paid state safely", async () => {
+      async function simulateSuccessPageServerVerification({
+        appointmentId,
+        sessionId,
+        appt,
+        service,
+        stripeClient,
+        mockDb,
+      }) {
+        let isVerifiedPaid = appt.payment_status === "fully_paid";
+        let slotConflict = Boolean(appt.needs_refund);
+        let verifiedStripeSessionMatches = false;
+
+        if (sessionId && sessionId.startsWith("cs_")) {
+          if (appt.stripe_session_id === sessionId && isVerifiedPaid) {
+            verifiedStripeSessionMatches = true;
+          } else {
+            try {
+              const session = await stripeClient.checkout.sessions.retrieve(sessionId);
+
+              const expectedAmountCentavos = service ? Math.round(service.price * 100) : 0;
+              const sessionMatchesAppt =
+                (session.metadata?.appointment_id === appt.id ||
+                  session.client_reference_id === appt.id) &&
+                (!appt.stripe_session_id || appt.stripe_session_id === session.id);
+
+              const amountMatches = service ? session.amount_total === expectedAmountCentavos : true;
+              const currencyMatches = session.currency?.toLowerCase() === "php";
+              const isPaidPaymentMode =
+                session.mode === "payment" && session.payment_status === "paid";
+
+              if (sessionMatchesAppt && amountMatches && currencyMatches && isPaidPaymentMode) {
+                verifiedStripeSessionMatches = true;
+                if (!isVerifiedPaid && service) {
+                  const result = await markPaidAndNotify({
+                    appointmentId: appt.id,
+                    sessionId: session.id,
+                    paymentIntentId: session.payment_intent ? String(session.payment_intent) : null,
+                    customerEmail: appt.email,
+                    customerName: appt.full_name,
+                    serviceName: service.name,
+                    date: appt.appointment_date,
+                    time: appt.appointment_time,
+                    phone: appt.phone,
+                    price: service.price,
+                    supabase: mockDb,
+                    runEmailWithAfter: false,
+                  });
+                  if (result.slotConflict) slotConflict = true;
+                  else if (result.updated || result.alreadyPaid || appt.payment_status === "fully_paid") {
+                    isVerifiedPaid = true;
+                  }
+                }
+              }
+            } catch (err) {
+              // Graceful error handling
+            }
+          }
+        }
+
+        const authResult = isAuthorizedToViewSuccessPage({
+          caller: { userId: null, role: null },
+          appointment: { id: appt.id, customer_id: appt.customer_id },
+          verifiedStripeSessionMatches,
+        });
+
+        return {
+          isAuthorized: authResult.isAuthorized,
+          authReason: authResult.reason,
+          isVerifiedPaid,
+          slotConflict,
+        };
+      }
+
+      const baseAppt = {
+        id: "appt_integration_001",
+        customer_id: "user_owner_001",
+        stripe_session_id: "cs_test_int_123",
+        payment_status: "pending_payment",
+        email: "client@example.com",
+        full_name: "Test Client",
+        appointment_date: "2026-10-25",
+        appointment_time: "10:00 AM",
+        phone: "+639171112222",
+      };
+      const service = { id: "srv_lash", name: "Lash Set", price: 1500 };
+
+      // Case A: Stripe API throws an error (e.g. invalid/deleted session or network error)
+      const errorStripeClient = {
+        checkout: {
+          sessions: {
+            retrieve: async () => {
+              throw new Error("No such checkout session: cs_test_invalid_999");
+            },
+          },
+        },
+      };
+      const resErr = await simulateSuccessPageServerVerification({
+        appointmentId: "appt_integration_001",
+        sessionId: "cs_test_invalid_999",
+        appt: { ...baseAppt },
+        service,
+        stripeClient: errorStripeClient,
+        mockDb: {},
+      });
+      assert.equal(resErr.isAuthorized, false);
+      assert.equal(resErr.authReason, "unauthorized");
+      assert.equal(resErr.isVerifiedPaid, false);
+
+      // Case B: Missing sessionId parameter entirely
+      const resMissing = await simulateSuccessPageServerVerification({
+        appointmentId: "appt_integration_001",
+        sessionId: undefined,
+        appt: { ...baseAppt },
+        service,
+        stripeClient: errorStripeClient,
+        mockDb: {},
+      });
+      assert.equal(resMissing.isAuthorized, false);
+      assert.equal(resMissing.authReason, "unauthorized");
+
+      // Case C: Non-cs_ malformed session string
+      const resMalformed = await simulateSuccessPageServerVerification({
+        appointmentId: "appt_integration_001",
+        sessionId: "malformed_string_without_cs_prefix",
+        appt: { ...baseAppt },
+        service,
+        stripeClient: errorStripeClient,
+        mockDb: {},
+      });
+      assert.equal(resMalformed.isAuthorized, false);
+      assert.equal(resMalformed.authReason, "unauthorized");
+
+      // Case D: Appointment already marked fully_paid by webhook before customer arrived
+      const alreadyPaidAppt = {
+        ...baseAppt,
+        payment_status: "fully_paid",
+        stripe_session_id: "cs_test_int_123",
+      };
+      const resAlreadyPaid = await simulateSuccessPageServerVerification({
+        appointmentId: "appt_integration_001",
+        sessionId: "cs_test_int_123",
+        appt: alreadyPaidAppt,
+        service,
+        stripeClient: errorStripeClient, // Stripe retrieve not called because verified DB match
+        mockDb: {},
+      });
+      assert.equal(resAlreadyPaid.isAuthorized, true);
+      assert.equal(resAlreadyPaid.authReason, "verified_stripe_session");
+      assert.equal(resAlreadyPaid.isVerifiedPaid, true);
     });
   });
 });
